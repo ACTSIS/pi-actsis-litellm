@@ -10,7 +10,7 @@ import {
 } from "../extensions/lib/limit-errors.ts";
 
 const BUDGET_EXCEEDED_MESSAGE =
-  '429: {"message":"Budget has been exceeded! Key=RPINTO (sk-...Y3mA) Current cost: 128.91354257719996, Max budget: 100.0","type":"budget_exceeded","param":null,"code":"429"}';
+  '429: {"message":"Budget has been exceeded! Key=TESTUSER (sk-...Y3mA) Current cost: 128.91354257719996, Max budget: 100.0","type":"budget_exceeded","param":null,"code":"429"}';
 
 const THROTTLING_ERROR_MESSAGE =
   '429: {"message":"Rate limit exceeded for api_key: f115... Limit type: tokens. Current limit: 100000, Remaining: 100000. Limit resets at: 2026-09-22 19:15:54 UTC","type":"throttling_error","param":null,"code":"429"}';

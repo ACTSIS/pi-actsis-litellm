@@ -11,7 +11,7 @@ const VALID_BODY = {
   spend: 128.91,
   max_budget: 100,
   budget_reset_at: "2026-09-23T00:00:00Z",
-  key_alias: "RPINTO",
+  key_alias: "TESTUSER",
 };
 
 describe("budget", () => {
@@ -58,7 +58,7 @@ describe("budget", () => {
         info.budgetResetAt,
         Date.parse("2026-09-23T00:00:00Z"),
       );
-      assert.equal(info.keyAlias, "RPINTO");
+      assert.equal(info.keyAlias, "TESTUSER");
       assert.equal(lastRequest?.url, "https://gateway.example.com/key/info");
       assert.equal(
         (lastRequest?.init.headers as Record<string, string>).Authorization,

@@ -99,6 +99,9 @@ describe("commands", () => {
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "actsis-litellm-cmd-test-"));
     originalEnv = { ...process.env };
     delete process.env.ACTSIS_LITELLM_URL;
+    // Isolate the config-file lookup: resolveConfig falls back to
+    // $HOME/.pi/agent/actsis-litellm.json, which exists on this machine.
+    process.env.HOME = tmpDir;
   });
 
   after(async () => {
