@@ -56,7 +56,7 @@ export interface BuiltProviderConfig {
   refreshModels: (context: RefreshModelsContext) => Promise<ProviderModelConfig[]>;
 }
 
-function storedToDiscovery(credentials: OAuthCredentials): CliAuthDiscovery {
+export function storedToDiscovery(credentials: OAuthCredentials): CliAuthDiscovery {
   const tokenEndpoint =
     typeof credentials.tokenEndpoint === "string" ? credentials.tokenEndpoint : "";
   const revocationEndpoint =

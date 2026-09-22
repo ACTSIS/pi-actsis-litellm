@@ -3,6 +3,12 @@ import type { ConfigFileShape } from "./lib/config.ts";
 import { buildProviderConfig } from "./lib/provider.ts";
 import { ConfigError } from "./lib/errors.ts";
 import { resolveConfig } from "./lib/config.ts";
+import {
+  buildStatusHandler,
+  buildModelsCommandHandler,
+  buildLogoutHandler,
+  defaultCommandDeps,
+} from "./lib/commands.ts";
 
 export interface LiteLLMExtensionState {
   providerId?: string;
@@ -16,28 +22,22 @@ const state: LiteLLMExtensionState = {};
 
 export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   // Register commands first; they work independently of provider registration.
+  const commandDeps = defaultCommandDeps();
+  commandDeps.getState = () => state;
+
   pi.registerCommand("litellm:status", {
     description: "Show LiteLLM gateway status and model cache state",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify(
-        `litellm:status is not implemented yet (state: ${JSON.stringify(state)})`,
-        "info",
-      );
-    },
+    handler: buildStatusHandler(commandDeps),
   });
 
   pi.registerCommand("litellm:models", {
     description: "Force-sync LiteLLM model catalog and show changes",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify("litellm:models is not implemented yet", "info");
-    },
+    handler: buildModelsCommandHandler(commandDeps),
   });
 
   pi.registerCommand("litellm:logout", {
     description: "Revoke LiteLLM credentials and clear local state",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify("litellm:logout is not implemented yet", "info");
-    },
+    handler: buildLogoutHandler(commandDeps),
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -66,6 +66,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     const providerConfig = await buildProviderConfig(cfg);
     pi.registerProvider(cfg.providerId, providerConfig);
     state.providerId = cfg.providerId;
+    state.catalogCount = providerConfig.models.length;
   } catch (err) {
     if (err instanceof ConfigError) {
       pi.on("session_start", async (_event, ctx) => {
