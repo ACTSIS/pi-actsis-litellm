@@ -9,6 +9,7 @@ import {
   refreshGrant,
   revokeToken,
   fetchModels,
+  fetchModelInfoV2,
   type CliAuthDiscovery,
   type DiscoveryAdaptation,
 } from "../extensions/lib/client.ts";
@@ -537,5 +538,41 @@ describe("fetchModels", () => {
     };
     await fetchModels(BASE_URL, "secret-key", 5000);
     assert.equal(authHeader, "Bearer secret-key");
+  });
+});
+
+describe("fetchModelInfoV2", () => {
+  it("requests the expected paginated URL and passes through the body", async () => {
+    const body = {
+      data: [{ model_name: "gpt-4", model_info: { key: "gpt-4" } }],
+      total_count: 1,
+      current_page: 2,
+      total_pages: 3,
+      size: 100,
+    };
+    let requestedUrl = "";
+    globalThis.fetch = async (input) => {
+      requestedUrl = input.toString();
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+    const result = await fetchModelInfoV2(BASE_URL, "key", 5000, 2, 100);
+    assert.equal(requestedUrl, `${BASE_URL}/v2/model/info?size=100&page=2`);
+    assert.deepEqual(result.body, body);
+    assert.equal(result.baseUrl, BASE_URL);
+  });
+
+  it("401 maps to AuthError", async () => {
+    globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
+    await assert.rejects(() => fetchModelInfoV2(BASE_URL, "key", 5000, 1, 100), {
+      code: "AUTH_ERROR",
+    });
+  });
+
+  it("500 maps to CatalogError", async () => {
+    globalThis.fetch = async () => new Response("boom", { status: 500 });
+    await assert.rejects(() => fetchModelInfoV2(BASE_URL, "key", 5000, 1, 100), {
+      code: "CATALOG_ERROR",
+      message: /v2 page 1/,
+    });
   });
 });

@@ -26,15 +26,25 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function modelInfoFixture(id: string): Record<string, unknown> {
+function modelInfoFixture(name: string): Record<string, unknown> {
   return {
-    id,
-    input_cost_per_token: 0.000003,
-    output_cost_per_token: 0.000015,
-    cache_read_input_token_cost: 0.0000015,
-    cache_creation_input_token_cost: 0.0000025,
-    max_input_tokens: 128000,
-    max_output_tokens: 4096,
+    model_name: name,
+    litellm_params: { model: name },
+    model_info: {
+      id: `opaque-deployment-hash-${name}`,
+      key: name,
+      db_model: false,
+      mode: "chat",
+      max_input_tokens: 128000,
+      max_output_tokens: 4096,
+      input_cost_per_token: 0.000003,
+      output_cost_per_token: 0.000015,
+      cache_read_input_token_cost: 0.0000015,
+      cache_creation_input_token_cost: 0.0000025,
+      supports_reasoning: false,
+      supports_vision: false,
+      supports_function_calling: true,
+    },
   };
 }
 
@@ -124,7 +134,7 @@ describe("fetchCatalogModels filtering", () => {
         return new Response(
           JSON.stringify([
             {
-              id: "qwen3-coder-next",
+              model_name: "qwen3-coder-next",
               mode: "embedding",
             },
             modelInfoFixture("gpt-oss-120b"),
@@ -203,11 +213,14 @@ describe("fetchCatalogModels mapping", () => {
         return new Response(
           JSON.stringify([
             {
-              id: "minimal-model",
-              input_cost_per_token: null,
-              output_cost_per_token: null,
-              cache_read_input_token_cost: null,
-              cache_creation_input_token_cost: null,
+              model_name: "minimal-model",
+              model_info: {
+                key: "minimal-model",
+                input_cost_per_token: null,
+                output_cost_per_token: null,
+                cache_read_input_token_cost: null,
+                cache_creation_input_token_cost: null,
+              },
             },
           ]),
           { status: 200 },
@@ -239,8 +252,8 @@ describe("fetchCatalogModels mapping", () => {
         return new Response(
           JSON.stringify([
             {
-              id: "input-only",
-              max_input_tokens: 32000,
+              model_name: "input-only",
+              model_info: { key: "input-only", max_input_tokens: 32000 },
             },
           ]),
           { status: 200 },
@@ -285,6 +298,300 @@ describe("fetchCatalogModels mapping", () => {
   });
 });
 
+describe("fetchCatalogModels enrichment", () => {
+  function makeFetch(): typeof globalThis.fetch {
+    return async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/models")) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: "gpt-oss-120b" },
+              { id: "oc/gemma4:31b" },
+              { id: "oc/glm-5.1" },
+              { id: "tiered-model" },
+              { id: "key-only-model" },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/v2/model/info")) {
+        throw new Error("v2 must not be fetched when /model/info succeeds");
+      }
+      if (url.includes("/model/info")) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                // /v1/models id equals model_name, NOT the opaque model_info.id.
+                model_name: "gpt-oss-120b",
+                litellm_params: { model: "gpt-oss-120b" },
+                model_info: {
+                  id: "deployment-hash-abc123",
+                  key: "gpt-oss-120b",
+                  mode: "chat",
+                  max_input_tokens: 131072,
+                  max_output_tokens: 131072,
+                  input_cost_per_token: 7.47e-8,
+                  output_cost_per_token: 1.11e-6,
+                  supports_reasoning: true,
+                  reasoning_effort_levels: ["minimal", "low", "medium", "high", "xhigh", "max"],
+                },
+              },
+              {
+                model_name: "oc/gemma4:31b",
+                model_info: {
+                  id: "deployment-hash-def456",
+                  key: "oc/gemma4:31b",
+                  mode: "chat",
+                  max_input_tokens: 131072,
+                  max_output_tokens: 262144,
+                  supports_vision: true,
+                  supports_reasoning: true,
+                  reasoning_effort_levels: ["minimal", "low", "medium", "high", "xhigh", "max"],
+                },
+              },
+              {
+                model_name: "oc/glm-5.1",
+                model_info: {
+                  id: "deployment-hash-ghi789",
+                  key: "oc/glm-5.1",
+                  mode: "chat",
+                  max_input_tokens: 202752,
+                  supports_vision: false,
+                  supports_reasoning: true,
+                  reasoning_effort_levels: ["none", "high"],
+                },
+              },
+              {
+                model_name: "tiered-model",
+                model_info: {
+                  id: "deployment-hash-jkl012",
+                  key: "tiered-model",
+                  mode: "chat",
+                  input_cost_per_token: 0.000003,
+                  output_cost_per_token: 0.000015,
+                  input_cost_per_token_above_128k_tokens: 0.0000015,
+                  output_cost_per_token_above_128k_tokens: 0.0000075,
+                  input_cost_per_token_above_200k_tokens: 0.000001,
+                  input_cost_per_token_above_512k_tokens: 0.0000005,
+                  output_cost_per_token_above_512k_tokens: 0.000005,
+                },
+              },
+              {
+                // No model_name: fallback key is model_info.key.
+                model_info: {
+                  id: "deployment-hash-mno345",
+                  key: "key-only-model",
+                  mode: "chat",
+                  max_input_tokens: 8192,
+                  max_output_tokens: 2048,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+  }
+
+  it("applies enrichment keyed by model_name, not the opaque model_info.id", async () => {
+    globalThis.fetch = makeFetch();
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    assert.deepEqual(models.map((m) => m.id).sort(), [
+      "gpt-oss-120b",
+      "key-only-model",
+      "oc/gemma4:31b",
+      "oc/glm-5.1",
+      "tiered-model",
+    ]);
+
+    const gpt = models.find((m) => m.id === "gpt-oss-120b")!;
+    assert.equal(gpt.contextWindow, 131072);
+    assert.equal(gpt.maxTokens, 131072);
+    assert.equal(gpt.reasoning, true);
+    assert.equal(gpt.cost.input, 7.47e-8 * 1_000_000);
+    assert.equal(gpt.cost.output, 1.11e-6 * 1_000_000);
+  });
+
+  it("matches an entry that only has model_info.key (no model_name)", async () => {
+    globalThis.fetch = makeFetch();
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    const m = models.find((m) => m.id === "key-only-model")!;
+    assert.ok(m, "key-only entry must be applied");
+    assert.equal(m.contextWindow, 8192);
+    assert.equal(m.maxTokens, 2048);
+  });
+
+  it("adds image input when supports_vision is true", async () => {
+    globalThis.fetch = makeFetch();
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    assert.deepEqual(models.find((m) => m.id === "oc/gemma4:31b")!.input, [
+      "text",
+      "image",
+    ]);
+    assert.deepEqual(models.find((m) => m.id === "oc/glm-5.1")!.input, ["text"]);
+  });
+
+  it("derives thinkingLevelMap from reasoning_effort_levels", async () => {
+    globalThis.fetch = makeFetch();
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+
+    const glm = models.find((m) => m.id === "oc/glm-5.1")!;
+    assert.deepEqual(glm.thinkingLevelMap, {
+      off: "none",
+      minimal: null,
+      low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: null,
+    });
+
+    const gpt = models.find((m) => m.id === "gpt-oss-120b")!;
+    assert.deepEqual(gpt.thinkingLevelMap, {
+      off: null,
+      minimal: "minimal",
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    });
+
+    // No reasoning_effort_levels -> no thinkingLevelMap.
+    const tiered = models.find((m) => m.id === "tiered-model")!;
+    assert.equal(tiered.thinkingLevelMap, undefined);
+  });
+
+  it("builds cost tiers from above-threshold fields, sorted ascending", async () => {
+    globalThis.fetch = makeFetch();
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    const tiered = models.find((m) => m.id === "tiered-model")!;
+    assert.deepEqual(tiered.cost.tiers, [
+      {
+        input: 1.5,
+        output: 7.5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        inputTokensAbove: 128000,
+      },
+      {
+        input: 1,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        inputTokensAbove: 200000,
+      },
+      {
+        input: 0.5,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        inputTokensAbove: 512000,
+      },
+    ]);
+
+    // Model without tier fields gets no tiers key.
+    const gpt = models.find((m) => m.id === "gpt-oss-120b")!;
+    assert.equal(gpt.cost.tiers, undefined);
+  });
+
+  it("falls back to /v2/model/info with pagination when /model/info fails", async () => {
+    const v2Pages = [
+      {
+        data: [
+          {
+            model_name: "v2-model-a",
+            model_info: {
+              id: "hash-a",
+              key: "v2-model-a",
+              mode: "chat",
+              max_input_tokens: 4096,
+              max_output_tokens: 1024,
+            },
+          },
+        ],
+        total_count: 2,
+        current_page: 1,
+        total_pages: 2,
+        size: 100,
+      },
+      {
+        data: [
+          {
+            model_name: "v2-model-b",
+            model_info: {
+              id: "hash-b",
+              key: "v2-model-b",
+              mode: "chat",
+              max_input_tokens: 8192,
+            },
+          },
+        ],
+        total_count: 2,
+        current_page: 2,
+        total_pages: 2,
+        size: 100,
+      },
+    ];
+
+    const requestedPages: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/models")) {
+        return new Response(
+          JSON.stringify({ data: [{ id: "v2-model-a" }, { id: "v2-model-b" }] }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/v2/model/info")) {
+        const page = new URL(url).searchParams.get("page");
+        requestedPages.push(page ?? "");
+        return new Response(JSON.stringify(v2Pages[Number(page) - 1]), {
+          status: 200,
+        });
+      }
+      if (url.includes("/model/info")) {
+        return new Response("Server Error", { status: 500 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    assert.deepEqual(requestedPages, ["1", "2"]);
+    assert.deepEqual(models.map((m) => m.id), ["v2-model-a", "v2-model-b"]);
+    assert.equal(models[0].contextWindow, 4096);
+    assert.equal(models[0].maxTokens, 1024);
+    assert.equal(models[1].contextWindow, 8192);
+  });
+
+  it("returns models with fallback defaults when both info endpoints fail", async () => {
+    globalThis.fetch = async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/models")) {
+        return new Response(JSON.stringify({ data: [{ id: "fallback" }] }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/model/info") || url.includes("/v2/model/info")) {
+        return new Response("Server Error", { status: 500 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    assert.equal(models.length, 1);
+    assert.equal(models[0].id, "fallback");
+    assert.equal(models[0].contextWindow, 128000);
+    assert.equal(models[0].maxTokens, 16384);
+    assert.equal(models[0].cost.input, 0);
+  });
+});
+
 describe("catalog cache helpers", () => {
   let tmpDir: string;
 
@@ -319,6 +626,28 @@ describe("catalog cache helpers", () => {
   it("returns null for a corrupt cache file", async () => {
     const cachePath = path.join(tmpDir, "cache.json");
     await writeFile(cachePath, "not json", "utf8");
+    const loaded = await loadCachedModels(cachePath);
+    assert.equal(loaded, null);
+  });
+
+  it("rejects a version 1 cache file after the schema bump", async () => {
+    const cachePath = path.join(tmpDir, "cache-v1.json");
+    const legacy = {
+      version: 1,
+      fetchedAt: Date.now(),
+      models: [
+        {
+          id: "stale",
+          name: "stale",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 16384,
+        },
+      ],
+    };
+    await writeFile(cachePath, JSON.stringify(legacy), "utf8");
     const loaded = await loadCachedModels(cachePath);
     assert.equal(loaded, null);
   });
