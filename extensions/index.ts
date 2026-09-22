@@ -31,6 +31,8 @@ export interface LiteLLMExtensionState {
 // Shared mutable state for T6 commands.
 const state: LiteLLMExtensionState = {};
 
+let configNoticeWired = false;
+
 function isOAuthCredential(
   credential: unknown,
 ): credential is { type: "oauth"; access: string } {
@@ -258,7 +260,8 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
           await registerWithConfig(state.providerId ?? fallbackId);
         } catch (err) {
           // Non-fatal: login already succeeded, re-registration is best-effort.
-          if (err instanceof ConfigError) {
+          if (err instanceof ConfigError && !configNoticeWired) {
+            configNoticeWired = true;
             pi.on("session_start", async (_event, ctx) => {
               if (ctx.hasUI) {
                 ctx.ui.notify(

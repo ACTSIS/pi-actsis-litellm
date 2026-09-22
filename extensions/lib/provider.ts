@@ -192,7 +192,7 @@ function synthesizeApiKeyCredentials(
     expires: Date.now() + tenYearsMs,
     authMode: "api_key",
     gatewayUrl: baseUrl,
-    tokenEndpoint: `${baseUrl}/token (not used)`,
+    tokenEndpoint: `${baseUrl}/token`,
     revocationEndpoint: "",
     resource: baseUrl,
     clientId: "",
@@ -261,8 +261,12 @@ export async function buildProviderConfig(
 
       try {
         await onLoginSuccess?.(config.baseUrl);
-      } catch {
-        // Non-fatal: re-registration failure should not block credential return.
+      } catch (err) {
+        // Non-fatal: re-registration failure should not block credential return,
+        // but surface it so the user knows /model may be stale.
+        callbacks.onProgress?.(
+          "Provider re-registration after login failed; /model may need a restart.",
+        );
       }
 
       return credentials;
@@ -271,8 +275,14 @@ export async function buildProviderConfig(
       credentials: OAuthCredentials,
       signal: AbortSignal,
     ): Promise<OAuthCredentials> {
-      if (credentials.authMode === "api_key" || !credentials.refresh) {
-        return credentials;
+      if (credentials.authMode === "api_key") {
+        // API keys are documented as long-lived synthetic credentials;
+        // there is nothing to refresh, so return a copy to keep the contract.
+        return { ...credentials };
+      }
+      if (!credentials.refresh) {
+        // Missing refresh on a real SSO credential is a real auth problem.
+        throw new AuthError("No refresh token stored; run /login again.");
       }
 
       const refreshToken =

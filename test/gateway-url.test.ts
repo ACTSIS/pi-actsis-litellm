@@ -57,6 +57,40 @@ describe("pickGatewayUrl", () => {
   it("returns null when nothing is available", () => {
     assert.equal(pickGatewayUrl({}), null);
   });
+
+  it("falls back past invalid env to valid stored", () => {
+    const result = pickGatewayUrl({
+      env: "not-a-valid-url",
+      stored: "https://stored.example.com",
+    });
+    assert.deepEqual(result, {
+      url: "https://stored.example.com",
+      source: "stored-credential",
+    });
+  });
+
+  it("falls back past invalid env and file to valid stored", () => {
+    const result = pickGatewayUrl({
+      env: "also-not-a-url",
+      file: "another-bad-url",
+      stored: "https://stored.example.com",
+    });
+    assert.deepEqual(result, {
+      url: "https://stored.example.com",
+      source: "stored-credential",
+    });
+  });
+
+  it("returns null when every source is invalid", () => {
+    assert.equal(
+      pickGatewayUrl({
+        env: "bad-env",
+        file: "bad-file",
+        stored: "bad-stored",
+      }),
+      null,
+    );
+  });
 });
 
 describe("readStoredCredentialGatewayUrl", () => {

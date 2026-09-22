@@ -156,26 +156,68 @@ describe("buildProviderConfig oauth.login", () => {
     });
   });
 
-  it("refreshToken returns api_key credentials unchanged", async () => {
+  it("refreshToken returns api_key credentials as a shallow copy without network calls", async () => {
+    mockFetch({
+      "/v1/models": new Response(
+        JSON.stringify({ data: [{ id: "gpt-4" }] }),
+        { status: 200 },
+      ),
+      "/key/info": new Response(JSON.stringify({}), { status: 200 }),
+    });
+
     const provider = await buildProviderConfig(null);
     const credentials = {
       access: "sk-test-key",
       refresh: "",
       authMode: "api_key",
       expires: Date.now() + 10 * 365 * 24 * 60 * 60 * 1000,
-      tokenEndpoint: "",
+      tokenEndpoint: "https://gateway.example.com/token",
       revocationEndpoint: "",
       resource: "https://gateway.example.com",
       clientId: "",
     } as unknown as OAuthCredentials;
 
-    const refreshed = await provider.oauth.refreshToken(
-      credentials,
-      new AbortController().signal,
+    let fetchCalls = 0;
+    const wrappedFetch = globalThis.fetch;
+    globalThis.fetch = (async (...args) => {
+      fetchCalls++;
+      return wrappedFetch(...args);
+    }) as typeof globalThis.fetch;
+
+    try {
+      const refreshed = await provider.oauth.refreshToken(
+        credentials,
+        new AbortController().signal,
+      );
+      assert.equal(refreshed.access, credentials.access);
+      assert.equal(refreshed.refresh, credentials.refresh);
+      assert.equal(refreshed.expires, credentials.expires);
+      assert.notStrictEqual(refreshed, credentials);
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = wrappedFetch;
+    }
+  });
+
+  it("refreshToken rejects sso credentials that lack a refresh token", async () => {
+    const provider = await buildProviderConfig(null);
+    const credentials = {
+      access: "sso-access-token",
+      refresh: "",
+      authMode: "sso",
+      expires: Date.now() + 60 * 1000,
+      tokenEndpoint: "https://gateway.example.com/token",
+      revocationEndpoint: "",
+      resource: "https://gateway.example.com",
+      clientId: "client-123",
+    } as unknown as OAuthCredentials;
+
+    await assert.rejects(
+      () => provider.oauth.refreshToken(credentials, new AbortController().signal),
+      {
+        message: "No refresh token stored; run /login again.",
+      },
     );
-    assert.equal(refreshed.access, credentials.access);
-    assert.equal(refreshed.refresh, credentials.refresh);
-    assert.equal(refreshed.expires, credentials.expires);
   });
 
   it("invokes onLoginSuccess with the resolved gateway URL", async () => {

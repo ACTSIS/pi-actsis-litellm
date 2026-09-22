@@ -54,13 +54,28 @@ export function pickGatewayUrl(parts: {
   stored?: string | undefined;
 }): GatewayUrlSource | null {
   if (parts.env) {
-    return { url: normalizeBaseUrl(parts.env), source: "env" };
+    try {
+      return { url: normalizeBaseUrl(parts.env), source: "env" };
+    } catch {
+      // Env value is invalid; treat it as absent and fall through.
+    }
   }
   if (parts.file) {
-    return { url: normalizeBaseUrl(parts.file), source: "config-file" };
+    try {
+      return { url: normalizeBaseUrl(parts.file), source: "config-file" };
+    } catch {
+      // File value is invalid; treat it as absent and fall through.
+    }
   }
   if (parts.stored) {
-    return { url: normalizeBaseUrl(parts.stored), source: "stored-credential" };
+    try {
+      return {
+        url: normalizeBaseUrl(parts.stored),
+        source: "stored-credential",
+      };
+    } catch {
+      // Stored value is invalid; treat it as absent.
+    }
   }
   return null;
 }
