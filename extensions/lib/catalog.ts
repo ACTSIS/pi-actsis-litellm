@@ -9,6 +9,39 @@ import { CatalogError } from "./errors.ts";
 import type { ActsisEnabledConfig } from "./config.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
+const CHAT_MODES = new Set(["chat", "completion"]);
+const NON_CHAT_MODES = new Set([
+  "embedding",
+  "audio_speech",
+  "audio_transcription",
+  "image_generation",
+  "image_edit",
+  "video_generation",
+  "rerank",
+  "moderations",
+  "realtime",
+]);
+
+// Conservative name heuristic for when no mode metadata is available.
+// NOTE: bare 'audio'/'speech' tokens are intentionally NOT in this list
+// because they are too risky for legitimate chat models (e.g. gpt-4o-audio-preview).
+// Gateways that return per-model mode metadata will still filter non-chat audio
+// models via the metadata path.
+const NON_CHAT_ID_RE =
+  /(^|[-_/.])(embed|embedding|embeddings|whisper|tts|transcription|transcrib|rerank|reranker|moderation|moderations|speech|diarize|dall-e|dalle|imagegen|stable-diffusion)([-_/.]|$)/i;
+
+export function isChatModelId(
+  id: string,
+  metadataMode?: string | null,
+): boolean {
+  if (typeof metadataMode === "string" && metadataMode.length > 0) {
+    const mode = metadataMode.toLowerCase();
+    if (CHAT_MODES.has(mode)) return true;
+    if (NON_CHAT_MODES.has(mode)) return false;
+  }
+  return !NON_CHAT_ID_RE.test(id);
+}
+
 const CACHE_SCHEMA_VERSION = 1;
 
 interface CachedCatalogFile {
@@ -121,12 +154,36 @@ export async function fetchCatalogModels(
     // Best-effort enrichment; proceed with default costs on failure.
   }
 
+  function extractMode(
+    entry: Record<string, unknown> | LiteLLMModelInfo | undefined,
+  ): string | undefined {
+    if (!entry || typeof entry !== "object") return undefined;
+    const mode = entry.mode;
+    if (typeof mode === "string" && mode) return mode;
+    const litellmParams = entry.litellm_params;
+    if (litellmParams && typeof litellmParams === "object") {
+      const lpMode = (litellmParams as Record<string, unknown>).mode;
+      if (typeof lpMode === "string" && lpMode) return lpMode;
+    }
+    const metadata = entry.metadata;
+    if (metadata && typeof metadata === "object") {
+      const mdMode = (metadata as Record<string, unknown>).mode;
+      if (typeof mdMode === "string" && mdMode) return mdMode;
+    }
+    return undefined;
+  }
+
   const seen = new Set<string>();
   const models: ProviderModelConfig[] = [];
-  for (const id of ids) {
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
     if (seen.has(id)) continue;
+    const v1Entry = body.data[i];
+    const infoEntry = infoMap.get(id);
+    const mode = extractMode(v1Entry) ?? extractMode(infoEntry);
+    if (!isChatModelId(id, mode)) continue;
     seen.add(id);
-    models.push(infoToConfig(id, infoMap.get(id)));
+    models.push(infoToConfig(id, infoEntry));
   }
 
   models.sort((a, b) => a.id.localeCompare(b.id));

@@ -8,6 +8,7 @@ import {
   loadCachedModels,
   saveCachedModels,
   computeCacheAge,
+  isChatModelId,
 } from "../extensions/lib/catalog.ts";
 import { buildProviderConfig } from "../extensions/lib/provider.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
@@ -45,6 +46,103 @@ function makeFetchConfig(): Parameters<typeof fetchCatalogModels>[0] {
     requestTimeoutMs: 30_000,
   };
 }
+
+describe("isChatModelId", () => {
+  const cases: [string, string | null | undefined, boolean][] = [
+    ["gpt-oss-120b", undefined, true],
+    ["qwen3-vl-8b", undefined, true],
+    ["claude-x", undefined, true],
+    ["nomic-embed", undefined, false],
+    ["whisper-1", undefined, false],
+    ["whisper-diarize", undefined, false],
+    ["my-tts", undefined, false],
+    ["openai/audio-transcription-hd", undefined, false],
+    ["gpt-4o-audio-preview", undefined, true],
+    ["gpt-4", "chat", true],
+    ["text-embedding-ada-002", "embedding", false],
+    ["whisper-large-v3", "audio_transcription", false],
+    ["dall-e-3", "image_generation", false],
+    ["some-weird-model", "completion", true],
+    ["unknown-mode-model", "batch", true],
+  ];
+
+  for (const [id, mode, expected] of cases) {
+    it(`${id} (mode=${String(mode)}) -> ${expected}`, () => {
+      assert.equal(isChatModelId(id, mode), expected);
+    });
+  }
+});
+
+describe("fetchCatalogModels filtering", () => {
+  it("excludes non-chat models from /v1/models by heuristic", async () => {
+    globalThis.fetch = async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/models")) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: "gpt-oss-120b" },
+              { id: "qwen3-coder-next" },
+              { id: "nomic-embed" },
+              { id: "whisper-1" },
+              { id: "qwen3-vl-8b" },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/model/info")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    assert.deepEqual(models.map((m) => m.id).sort(), [
+      "gpt-oss-120b",
+      "qwen3-coder-next",
+      "qwen3-vl-8b",
+    ]);
+  });
+
+  it("uses /model/info mode metadata to override heuristic", async () => {
+    globalThis.fetch = async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/models")) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: "gpt-oss-120b" },
+              { id: "qwen3-coder-next" },
+              { id: "qwen3-vl-8b" },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/model/info")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "qwen3-coder-next",
+              mode: "embedding",
+            },
+            modelInfoFixture("gpt-oss-120b"),
+            modelInfoFixture("qwen3-vl-8b"),
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const models = await fetchCatalogModels(makeFetchConfig(), "api-key");
+    assert.deepEqual(models.map((m) => m.id).sort(), [
+      "gpt-oss-120b",
+      "qwen3-vl-8b",
+    ]);
+  });
+});
 
 describe("fetchCatalogModels mapping", () => {
   it("converts per-token costs to per-million and applies defaults", async () => {
