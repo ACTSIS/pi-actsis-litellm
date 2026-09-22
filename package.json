@@ -16,6 +16,14 @@
     "oauth",
     "provider"
   ],
+  "homepage": "https://github.com/ACTSIS/pi-actsis-litellm#readme",
+  "bugs": {
+    "url": "https://github.com/ACTSIS/pi-actsis-litellm/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ACTSIS/pi-actsis-litellm.git"
+  },
   "pi": {
     "extensions": [
       "./extensions"
