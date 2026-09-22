@@ -485,7 +485,7 @@ export async function revokeToken(
   throw new AuthError(`Token revocation failed: ${description}`);
 }
 
-interface ModelsResponse {
+export interface ModelsResponse {
   baseUrl: string;
   body: unknown;
 }
@@ -496,7 +496,7 @@ export async function fetchModels(
   timeoutMs: number,
 ): Promise<ModelsResponse> {
   const normalized = baseUrl.replace(/\/+$/, "");
-  const response = await fetch(`${normalized}/v1/models`, {
+  const response = await fetch(`${normalized}/v1/models?include_metadata=true`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },

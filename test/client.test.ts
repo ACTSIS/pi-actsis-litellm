@@ -422,7 +422,7 @@ describe("fetchModels", () => {
   it("200 passes through parsed body", async () => {
     const body = { data: [{ id: "gpt-4" }] };
     globalThis.fetch = async (input) => {
-      assert.equal(input.toString(), `${BASE_URL}/v1/models`);
+      assert.equal(input.toString(), `${BASE_URL}/v1/models?include_metadata=true`);
       return new Response(JSON.stringify(body), { status: 200 });
     };
     const result = await fetchModels(BASE_URL, "key", 5000);
