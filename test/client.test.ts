@@ -2,6 +2,7 @@ import { describe, it, before, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   validateDiscovery,
+  validateDiscoveryWithAdaptation,
   fetchCliAuthDiscovery,
   registerClient,
   exchangeAuthorizationCode,
@@ -9,6 +10,7 @@ import {
   revokeToken,
   fetchModels,
   type CliAuthDiscovery,
+  type DiscoveryAdaptation,
 } from "../extensions/lib/client.ts";
 import { AuthError, DiscoveryError } from "../extensions/lib/errors.ts";
 
@@ -103,6 +105,103 @@ describe("validateDiscovery", () => {
         message: /same-origin/,
       },
     );
+  });
+
+  it("scheme-tolerant: upgrades http endpoints to https when baseUrl is https and host+port match", () => {
+    const raw = {
+      ...VALID_DISCOVERY,
+      issuer: "http://gateway.example.com",
+      authorization_endpoint: "http://gateway.example.com/auth/authorize",
+      token_endpoint: "http://gateway.example.com/auth/token",
+      registration_endpoint: "http://gateway.example.com/auth/register",
+      revocation_endpoint: "http://gateway.example.com/auth/revoke",
+      resource: "http://gateway.example.com/v1",
+    };
+
+    const d = validateDiscovery(raw, BASE_URL);
+    assert.equal(d.issuer, "https://gateway.example.com");
+    assert.equal(d.authorizationEndpoint, "https://gateway.example.com/auth/authorize");
+    assert.equal(d.tokenEndpoint, "https://gateway.example.com/auth/token");
+    assert.equal(d.registrationEndpoint, "https://gateway.example.com/auth/register");
+    assert.equal(d.revocationEndpoint, "https://gateway.example.com/auth/revoke");
+    assert.equal(d.resource, "http://gateway.example.com/v1");
+  });
+
+  it("reports adaptation for scheme-tolerant upgrade", () => {
+    const raw = {
+      ...VALID_DISCOVERY,
+      issuer: "http://gateway.example.com",
+      authorization_endpoint: "http://gateway.example.com/auth/authorize",
+      token_endpoint: "http://gateway.example.com/auth/token",
+      registration_endpoint: "http://gateway.example.com/auth/register",
+      revocation_endpoint: "http://gateway.example.com/auth/revoke",
+      resource: "http://gateway.example.com/v1",
+    };
+
+    const { discovery, adaptation } = validateDiscoveryWithAdaptation(raw, BASE_URL);
+    assert.equal(discovery.issuer, "https://gateway.example.com");
+    assert.equal(adaptation?.kind, "scheme-upgraded");
+    assert.equal((adaptation as DiscoveryAdaptation)?.announcedIssuer, "http://gateway.example.com");
+    assert.equal((adaptation as DiscoveryAdaptation)?.effectiveIssuer, "https://gateway.example.com");
+  });
+
+  it("rejects https endpoints when baseUrl is http (no downgrade)", () => {
+    assert.throws(
+      () =>
+        validateDiscovery(
+          VALID_DISCOVERY,
+          "http://gateway.example.com",
+        ),
+      {
+        message: /issuer origin mismatch/,
+      },
+    );
+  });
+
+  it("rejects different host even with scheme upgrade", () => {
+    const raw = {
+      ...VALID_DISCOVERY,
+      issuer: "http://other.example.com",
+      authorization_endpoint: "http://other.example.com/auth/authorize",
+      token_endpoint: "http://other.example.com/auth/token",
+      registration_endpoint: "http://other.example.com/auth/register",
+      revocation_endpoint: "http://other.example.com/auth/revoke",
+      resource: "http://other.example.com/v1",
+    };
+    assert.throws(() => validateDiscovery(raw, BASE_URL), {
+      message: /issuer origin mismatch/,
+    });
+  });
+
+  it("rejects different port even with scheme upgrade", () => {
+    const raw = {
+      ...VALID_DISCOVERY,
+      issuer: "http://gateway.example.com:8443",
+      authorization_endpoint: "http://gateway.example.com:8443/auth/authorize",
+      token_endpoint: "http://gateway.example.com:8443/auth/token",
+      registration_endpoint: "http://gateway.example.com:8443/auth/register",
+      revocation_endpoint: "http://gateway.example.com:8443/auth/revoke",
+      resource: "http://gateway.example.com:8443/v1",
+    };
+    assert.throws(() => validateDiscovery(raw, BASE_URL), {
+      message: /issuer origin mismatch/,
+    });
+  });
+
+  it("accepts http baseUrl with http discovery unchanged", () => {
+    const httpBase = "http://gateway.example.com";
+    const raw = {
+      ...VALID_DISCOVERY,
+      issuer: httpBase,
+      authorization_endpoint: `${httpBase}/auth/authorize`,
+      token_endpoint: `${httpBase}/auth/token`,
+      registration_endpoint: `${httpBase}/auth/register`,
+      revocation_endpoint: `${httpBase}/auth/revoke`,
+      resource: `${httpBase}/v1`,
+    };
+    const d = validateDiscovery(raw, httpBase);
+    assert.equal(d.issuer, httpBase);
+    assert.equal(d.resource, `${httpBase}/v1`);
   });
 
   it("rejects missing authorization_code grant type", () => {

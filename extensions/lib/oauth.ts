@@ -137,9 +137,16 @@ export async function runLoginFlow(
   config: { requestTimeoutMs: number },
   discovery: CliAuthDiscovery,
   callbacks: OAuthLoginCallbacks,
+  notices?: { schemeUpgraded?: boolean },
 ): Promise<OAuthCredentials> {
   const server = new LoopbackCallbackServer();
   try {
+    if (notices?.schemeUpgraded) {
+      callbacks.onProgress?.(
+        "Gateway advertises http:// endpoints; using https:// (scheme upgrade applied).",
+      );
+    }
+
     const { port } = await server.start();
     const redirectUri = `http://127.0.0.1:${port}/callback`;
 

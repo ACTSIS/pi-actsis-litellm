@@ -129,11 +129,15 @@ export async function buildProviderConfig(
               "Gateway base URL (e.g. https://gateway.example.com)",
           }),
       });
+      let schemeUpgraded = false;
       const discovery = await fetchCliAuthDiscovery(
         config.baseUrl,
         config.requestTimeoutMs,
+        (adaptation) => {
+          schemeUpgraded = true;
+        },
       );
-      return runLoginFlow(config, discovery, callbacks);
+      return runLoginFlow(config, discovery, callbacks, { schemeUpgraded });
     },
     async refreshToken(
       credentials: OAuthCredentials,

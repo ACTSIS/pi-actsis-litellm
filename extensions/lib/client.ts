@@ -22,11 +22,7 @@ function normalizeOrigin(origin: string): string {
   return origin.replace(/\/+$/, "").toLowerCase();
 }
 
-function requireSameOrigin(
-  baseOrigin: string,
-  value: unknown,
-  name: string,
-): string {
+function parseHttpUrl(value: unknown, name: string): URL {
   if (typeof value !== "string") {
     throw new DiscoveryError(`${name} must be a string`);
   }
@@ -41,19 +37,52 @@ function requireSameOrigin(
       `${name} must use http:// or https://: ${value}`,
     );
   }
-  const endpointOrigin = getOrigin(value);
-  if (endpointOrigin !== baseOrigin) {
+  return url;
+}
+
+interface SameOriginResult {
+  value: string;
+  upgraded: boolean;
+}
+
+function requireSameOrigin(
+  baseOrigin: string,
+  value: unknown,
+  name: string,
+): SameOriginResult {
+  const url = parseHttpUrl(value, name);
+  const endpointOrigin = getOrigin(value as string);
+
+  if (endpointOrigin === baseOrigin) {
+    return { value: value as string, upgraded: false };
+  }
+
+  // Scheme-tolerant same-origin check: allow an automatic http -> https
+  // upgrade when the caller's base URL is https and the announced endpoint
+  // is http, as long as host and port are identical. Never downgrade.
+  const baseParsed = new URL(baseOrigin);
+  if (
+    url.host.toLowerCase() !== baseParsed.host.toLowerCase() ||
+    url.protocol.toLowerCase() !== "http:" ||
+    baseParsed.protocol.toLowerCase() !== "https:"
+  ) {
     throw new DiscoveryError(
       `${name} must be same-origin with the gateway (${baseOrigin}), got ${endpointOrigin}`,
     );
   }
-  return value;
+
+  const upgraded = (value as string).replace(/^http:/i, "https:");
+  return { value: upgraded, upgraded: true };
 }
 
-export function validateDiscovery(
+export type DiscoveryAdaptation =
+  | { kind: "scheme-upgraded"; announcedIssuer: string; effectiveIssuer: string }
+  | null;
+
+export function validateDiscoveryWithAdaptation(
   raw: unknown,
   baseUrl: string,
-): CliAuthDiscovery {
+): { discovery: CliAuthDiscovery; adaptation: DiscoveryAdaptation } {
   if (typeof raw !== "object" || raw === null) {
     throw new DiscoveryError("Discovery response is not an object");
   }
@@ -74,10 +103,31 @@ export function validateDiscovery(
     );
   }
   const issuerOrigin = getOrigin(record.issuer);
+  let issuer = record.issuer;
+  let adaptation: DiscoveryAdaptation = null;
+
   if (issuerOrigin !== expectedOrigin) {
-    throw new DiscoveryError(
-      `Discovery issuer origin mismatch: expected ${expectedOrigin}, got ${issuerOrigin}`,
-    );
+    const issuerParsed = parseHttpUrl(record.issuer, "issuer");
+    const baseParsed = new URL(expectedOrigin);
+    const sameHost =
+      issuerParsed.host.toLowerCase() === baseParsed.host.toLowerCase();
+    const allowedDirection =
+      issuerParsed.protocol.toLowerCase() === "http:" &&
+      baseParsed.protocol.toLowerCase() === "https:";
+
+    if (!sameHost || !allowedDirection) {
+      throw new DiscoveryError(
+        `Discovery issuer origin mismatch: expected ${expectedOrigin}, got ${issuerOrigin}`,
+      );
+    }
+
+    const upgradedIssuer = record.issuer.replace(/^http:/i, "https:");
+    adaptation = {
+      kind: "scheme-upgraded",
+      announcedIssuer: record.issuer,
+      effectiveIssuer: upgradedIssuer,
+    };
+    issuer = upgradedIssuer;
   }
 
   const authorizationEndpoint = requireSameOrigin(
@@ -100,11 +150,19 @@ export function validateDiscovery(
     record.revocation_endpoint,
     "revocation_endpoint",
   );
-  const resource = requireSameOrigin(
-    expectedOrigin,
-    record.resource,
-    "resource",
-  );
+
+  // resource must be accepted if it is same-origin with either the announced
+  // origin or the upgraded origin, but it is always preserved verbatim because
+  // the gateway expects the exact announced resource value in authorize/token
+  // bodies.
+  const resourceUrl = parseHttpUrl(record.resource, "resource");
+  const resourceOrigin = getOrigin(record.resource as string);
+  const resourceMatchesAnnounced = resourceOrigin === issuerOrigin;
+  const resourceMatchesEffective = resourceOrigin === expectedOrigin;
+  if (!resourceMatchesAnnounced && !resourceMatchesEffective) {
+    requireSameOrigin(expectedOrigin, record.resource, "resource");
+  }
+  const resource = record.resource as string;
 
   const codeChallengeMethods = Array.isArray(record.code_challenge_methods_supported)
     ? record.code_challenge_methods_supported.map((m) => String(m))
@@ -136,17 +194,27 @@ export function validateDiscovery(
     : [];
 
   return {
-    contractVersion: 1,
-    issuer: record.issuer,
-    authorizationEndpoint,
-    tokenEndpoint,
-    registrationEndpoint,
-    revocationEndpoint,
-    resource,
-    codeChallengeMethods,
-    grantTypes,
-    tokenEndpointAuthMethods,
+    discovery: {
+      contractVersion: 1,
+      issuer,
+      authorizationEndpoint: authorizationEndpoint.value,
+      tokenEndpoint: tokenEndpoint.value,
+      registrationEndpoint: registrationEndpoint.value,
+      revocationEndpoint: revocationEndpoint.value,
+      resource,
+      codeChallengeMethods,
+      grantTypes,
+      tokenEndpointAuthMethods,
+    },
+    adaptation,
   };
+}
+
+export function validateDiscovery(
+  raw: unknown,
+  baseUrl: string,
+): CliAuthDiscovery {
+  return validateDiscoveryWithAdaptation(raw, baseUrl).discovery;
 }
 
 function discoveryUrl(baseUrl: string): string {
@@ -157,6 +225,7 @@ function discoveryUrl(baseUrl: string): string {
 export async function fetchCliAuthDiscovery(
   baseUrl: string,
   timeoutMs: number,
+  onAdaptation?: (a: NonNullable<DiscoveryAdaptation>) => void,
 ): Promise<CliAuthDiscovery> {
   let response: Response;
   try {
@@ -186,7 +255,11 @@ export async function fetchCliAuthDiscovery(
     );
   }
 
-  return validateDiscovery(body, baseUrl);
+  const { discovery, adaptation } = validateDiscoveryWithAdaptation(body, baseUrl);
+  if (adaptation) {
+    onAdaptation?.(adaptation);
+  }
+  return discovery;
 }
 
 interface RegisteredClient {
