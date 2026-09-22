@@ -13,12 +13,18 @@ function makeDeps(opts: {
   env?: Record<string, string | undefined>;
   files?: Record<string, ConfigFileShape | null>;
   prompt?: () => Promise<string | null | undefined>;
+  storedUrl?: string | null;
 }) {
   const env = opts.env ?? {};
   const home = env.HOME ?? "/home/user";
   const files = opts.files ?? {};
   const fileLoader = async (path: string) => files[path] ?? null;
-  return { env: { ...env, HOME: home }, fileLoader, prompt: opts.prompt ?? (async () => null) };
+  return {
+    env: { ...env, HOME: home },
+    fileLoader,
+    prompt: opts.prompt ?? (async () => null),
+    storedUrl: opts.storedUrl,
+  };
 }
 
 describe("normalizeBaseUrl", async () => {
@@ -136,5 +142,28 @@ describe("resolveConfig", async () => {
     await assert.rejects(() => resolveConfig(deps), {
       message: /Gateway base URL not configured/,
     });
+  });
+
+  it("prefers config file over stored credential URL", async () => {
+    const deps = makeDeps({
+      env: {},
+      files: {
+        "/home/user/.pi/agent/actsis-litellm.json": { baseUrl: "https://file.example.com" },
+      },
+      storedUrl: "https://stored.example.com",
+    });
+    const config = await resolveConfig(deps);
+    assert.equal(config.baseUrl, "https://file.example.com");
+  });
+
+  it("falls back to stored credential URL before prompting", async () => {
+    const deps = makeDeps({
+      env: {},
+      files: {},
+      storedUrl: "https://stored.example.com",
+      prompt: async () => "https://prompt.example.com",
+    });
+    const config = await resolveConfig(deps);
+    assert.equal(config.baseUrl, "https://stored.example.com");
   });
 });

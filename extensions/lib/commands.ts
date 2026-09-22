@@ -13,6 +13,8 @@ import { loadCachedModels, computeCacheAge } from "./catalog.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { LiteLLMExtensionState } from "../index.ts";
 
+import { readStoredCredentialGatewayUrl } from "./gateway-url.ts";
+
 const DEFAULT_PROVIDER_ID = "actsis-litellm";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -41,7 +43,11 @@ function getProviderId(deps: CommandDeps): string {
   return deps.getState().providerId?.trim() || DEFAULT_PROVIDER_ID;
 }
 
-async function resolveNonInteractiveConfig(): Promise<ActsisEnabledConfig | null> {
+async function resolveStatusConfig(
+  providerId: string,
+  authPath: string,
+): Promise<ActsisEnabledConfig | null> {
+  const storedUrl = await readStoredCredentialGatewayUrl(authPath, providerId);
   try {
     return await resolveConfig({
       env: process.env,
@@ -54,6 +60,7 @@ async function resolveNonInteractiveConfig(): Promise<ActsisEnabledConfig | null
           return null;
         }
       },
+      storedUrl,
       prompt: async () => undefined,
     });
   } catch (err) {
@@ -133,11 +140,11 @@ export function buildStatusHandler(deps: CommandDeps) {
     const providerId = getProviderId(deps);
 
     try {
-      const cfg = await resolveNonInteractiveConfig();
+      const cfg = await resolveStatusConfig(providerId, deps.authPath);
       if (!cfg) {
         notify(
           ctx,
-          "Gateway URL not configured. Set ACTSIS_LITELLM_URL or use /login to configure.",
+          "Gateway not configured. Run /login and select this provider to set it up.",
           "warning",
         );
         return;

@@ -1,9 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { ConfigFileShape } from "./lib/config.ts";
-import { buildProviderConfig } from "./lib/provider.ts";
+import type { ConfigFileShape, ActsisEnabledConfig } from "./lib/config.ts";
+import {
+  buildProviderConfig,
+  defaultAuthPath,
+} from "./lib/provider.ts";
 import { ConfigError } from "./lib/errors.ts";
 import { resolveConfig } from "./lib/config.ts";
+import { readStoredCredentialGatewayUrl } from "./lib/gateway-url.ts";
 import {
   buildStatusHandler,
   buildModelsCommandHandler,
@@ -128,6 +132,46 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
   }
 }
 
+async function resolveStartupConfig(): Promise<ActsisEnabledConfig | null> {
+  const storedUrl = await readStoredCredentialGatewayUrl(
+    defaultAuthPath(),
+    state.providerId ?? "actsis-litellm",
+  );
+  try {
+    return await resolveConfig({
+      env: process.env,
+      fileLoader: async (filePath) => {
+        try {
+          const { readFile } = await import("node:fs/promises");
+          const raw = await readFile(filePath, "utf8");
+          return JSON.parse(raw) as ConfigFileShape;
+        } catch {
+          return null;
+        }
+      },
+      storedUrl,
+      prompt: async () => undefined,
+    });
+  } catch (err) {
+    if (err instanceof ConfigError) return null;
+    throw err;
+  }
+}
+
+async function createFileLoader(): Promise<
+  (path: string) => Promise<ConfigFileShape | null>
+> {
+  return async (filePath: string): Promise<ConfigFileShape | null> => {
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const raw = await readFile(filePath, "utf8");
+      return JSON.parse(raw) as ConfigFileShape;
+    } catch {
+      return null;
+    }
+  };
+}
+
 export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   // Register commands first; they work independently of provider registration.
   const commandDeps = defaultCommandDeps();
@@ -187,39 +231,66 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     await refreshBudgetWidget(ctx as unknown as WidgetContext);
   });
 
-  // Attempt quiet config resolution. If the gateway URL is not configured
-  // yet, skip provider registration; the user can still use /login.
-  try {
+  async function registerWithConfig(providerId: string): Promise<void> {
+    const fileLoader = await createFileLoader();
+    const storedUrl = await readStoredCredentialGatewayUrl(
+      defaultAuthPath(),
+      providerId,
+    );
     const cfg = await resolveConfig({
       env: process.env,
-      fileLoader: async (filePath) => {
-        try {
-          const { readFile } = await import("node:fs/promises");
-          const raw = await readFile(filePath, "utf8");
-          return JSON.parse(raw) as ConfigFileShape;
-        } catch {
-          return null;
-        }
-      },
+      fileLoader,
+      storedUrl,
       prompt: async () => undefined,
     });
-
     const providerConfig = await buildProviderConfig(cfg);
     pi.registerProvider(cfg.providerId, providerConfig);
     state.providerId = cfg.providerId;
     state.catalogCount = providerConfig.models.length;
-  } catch (err) {
-    if (err instanceof ConfigError) {
-      pi.on("session_start", async (_event, ctx) => {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            "pi-actsis-litellm: gateway URL not configured; /login will prompt",
-            "info",
-          );
-        }
+  }
+
+  async function registerBestEffort(): Promise<void> {
+    const cfg = await resolveStartupConfig();
+    if (cfg) {
+      const providerConfig = await buildProviderConfig(cfg, {
+        onLoginSuccess: async (_gatewayUrl) => {
+          try {
+            await registerWithConfig(state.providerId ?? cfg.providerId);
+          } catch (err) {
+            // Non-fatal: login already succeeded, re-registration is best-effort.
+            if (err instanceof ConfigError) {
+              pi.on("session_start", async (_event, ctx) => {
+                if (ctx.hasUI) {
+                  ctx.ui.notify(
+                    "pi-actsis-litellm: run /login to configure the gateway",
+                    "info",
+                  );
+                }
+              });
+            }
+          }
+        },
       });
+      pi.registerProvider(cfg.providerId, providerConfig);
+      state.providerId = cfg.providerId;
+      state.catalogCount = providerConfig.models.length;
       return;
     }
-    throw err;
+
+    // No URL configured yet: register a placeholder so /login still works.
+    const placeholderConfig = await buildProviderConfig(null);
+    pi.registerProvider("actsis-litellm", placeholderConfig);
+    state.providerId = "actsis-litellm";
+
+    pi.on("session_start", async (_event, ctx) => {
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          "pi-actsis-litellm: run /login to configure the gateway",
+          "info",
+        );
+      }
+    });
   }
+
+  await registerBestEffort();
 }

@@ -129,9 +129,45 @@ describe("commands", () => {
       assert.equal(notifications[0].level, "warning");
       assert.ok(
         notifications[0].message.includes(
-          "Gateway URL not configured. Set ACTSIS_LITELLM_URL or use /login to configure.",
+          "Gateway not configured. Run /login and select this provider to set it up.",
         ),
       );
+    });
+
+    it("shows gateway URL from stored credential", async () => {
+      await writeFile(
+        deps.authPath,
+        JSON.stringify(
+          {
+            "actsis-litellm": {
+              type: "oauth",
+              tokenEndpoint: "https://gateway.example.com/token",
+              access: "a",
+              refresh: "r",
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      await mkdir(path.dirname(deps.cachePath), { recursive: true });
+      await writeFile(deps.cachePath, JSON.stringify({ version: 1, fetchedAt: Date.now(), models: [] }), "utf8");
+
+      const ctx = makeMockCtx({
+        modelRegistry: makeMockRegistry({
+          getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+          getProviderAuth: async () => undefined,
+          getRegisteredProviderIds: () => ["actsis-litellm"],
+          getAll: () => [],
+        }),
+      });
+
+      const handler = buildStatusHandler(deps);
+      await handler("", ctx);
+
+      const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
+      assert.equal(notifications.length, 1);
+      assert.ok(notifications[0].message.includes("Gateway: https://gateway.example.com"));
     });
 
     it("reports no credential when auth is absent", async () => {

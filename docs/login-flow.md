@@ -14,39 +14,59 @@ sequenceDiagram
     participant GW as LiteLLM gateway
 
     U->>PI: Run /login, pick actsis-litellm
-    PI->>GW: GET /.well-known/litellm-cli-auth
-    GW-->>PI: Discovery document (authorize, token, register, revoke)
-    PI->>PI: Generate PKCE code_verifier + code_challenge (S256) + state
-    PI->>GW: POST /client/register (public client, redirect loopback only)
-    GW-->>PI: client_id (dynamic public client)
-    PI->>LB: Start loopback callback server on 127.0.0.1 ephemeral port
-    PI->>B: Open authorize URL + code_challenge + state + resource param
-    B->>GW: User authenticates and consents (team picker)
-    GW-->>B: Authorization code via redirect to loopback callback
-    B->>LB: GET /callback?code=...&state=...
-    LB->>PI: Return code + state
-    PI->>PI: Validate state matches
-    PI->>GW: POST token endpoint (code + code_verifier + client_id)
-    GW-->>PI: access_token, refresh_token, expires_in, token metadata
+    PI->>U: Prompt for gateway base URL
+    alt URL is not already configured
+        U-->>PI: Enter gateway URL
+    end
+    PI->>U: Choose sign-in method: SSO or API key
+    alt User chooses SSO
+        PI->>GW: GET /.well-known/litellm-cli-auth
+        GW-->>PI: Discovery document (authorize, token, register, revoke)
+        PI->>PI: Generate PKCE code_verifier + code_challenge (S256) + state
+        PI->>GW: POST /client/register (public client, redirect loopback only)
+        GW-->>PI: client_id (dynamic public client)
+        PI->>LB: Start loopback callback server on 127.0.0.1 ephemeral port
+        PI->>B: Open authorize URL + code_challenge + state + resource param
+        B->>GW: User authenticates and consents (team picker)
+        GW-->>B: Authorization code via redirect to loopback callback
+        B->>LB: GET /callback?code=...&state=...
+        LB->>PI: Return code + state
+        PI->>PI: Validate state matches
+        PI->>GW: POST token endpoint (code + code_verifier + client_id)
+        GW-->>PI: access_token, refresh_token, expires_in, token metadata
+    else User chooses API key
+        PI->>U: Prompt for LiteLLM API key (sk-...)
+        U-->>PI: Enter API key
+        PI->>GW: GET /v1/models with Authorization: Bearer key
+        GW-->>PI: 200 OK (key is valid)
+        PI->>PI: Synthesize long-lived OAuth credential (authMode: api_key)
+    end
     PI->>PI: Map credentials to pi OAuthCredentials
     PI->>PI: Persist via pi credential store (~/.pi/agent/auth.json)
     PI-->>U: Login complete
 
-    Note over PI,GW: Refresh: access token renewed using refresh_token;<br/>new refresh_token rotated and persisted automatically.
-    Note over PI,GW: Logout: POST revoke endpoint with refresh_token;<br/>server invalidates token and local credentials are cleared.
+    Note over PI,GW: SSO refresh: access token renewed using refresh_token;<br/>new refresh_token rotated and persisted automatically.<br/>API key: no refresh; synthetic credential is long-lived.
+    Note over PI,GW: Logout: POST revoke endpoint with refresh_token for SSO;<br/>API key mode skips revocation. Local credentials are cleared.
 ```
 
 ## Step-by-step explanation
 
-1. **Discovery** — The extension reads the gateway base URL from `ACTSIS_LITELLM_URL`, a config file, or the `/login` prompt, then fetches `/.well-known/litellm-cli-auth` to learn the OAuth endpoints.
-2. **Dynamic client registration** — A public, loopback-only client is registered on demand. No client secret is involved.
-3. **PKCE S256** — The extension generates a local `code_verifier`, hashes it into a `code_challenge`, and sends only the challenge to the authorize endpoint.
-4. **Browser consent** — The user's browser opens the authorize URL. The gateway authenticates the user and presents a team/role picker (the browser-side consent step).
-5. **Loopback callback** — The gateway redirects to `http://127.0.0.1:<ephemeral>/callback` with a single-use authorization `code` and the original `state`.
-6. **Token exchange** — The extension validates `state`, then exchanges the `code` and `code_verifier` for an `access_token` and `refresh_token`.
-7. **Credential storage** — Tokens are passed to pi's native credential store (`~/.pi/agent/auth.json`); the extension does not write credentials to its own files.
-8. **Refresh rotation** — On every access-token renewal the gateway returns a new `refresh_token`; the extension updates the stored credentials immediately.
-9. **Logout** — `/litellm:logout` calls the revoke endpoint with the current `refresh_token` and clears the pi credential entry.
+1. **URL prompt (if needed)** — When no gateway URL is known from environment, config file, or a previous credential, `/login` asks for the gateway base URL first.
+2. **Method selector** — The user chooses **SSO (browser)** or **API key**.
+3. **SSO path only:**
+   - **Discovery** — The extension fetches `/.well-known/litellm-cli-auth` to learn the OAuth endpoints.
+   - **Dynamic client registration** — A public, loopback-only client is registered on demand. No client secret is involved.
+   - **PKCE S256** — The extension generates a local `code_verifier`, hashes it into a `code_challenge`, and sends only the challenge to the authorize endpoint.
+   - **Browser consent** — The user's browser opens the authorize URL. The gateway authenticates the user and presents a team/role picker.
+   - **Loopback callback** — The gateway redirects to `http://127.0.0.1:<ephemeral>/callback` with a single-use authorization `code` and the original `state`.
+   - **Token exchange** — The extension validates `state`, then exchanges the `code` and `code_verifier` for an `access_token` and `refresh_token`.
+4. **API key path only:**
+   - The user enters a LiteLLM API key.
+   - The extension validates the key with `GET {gateway}/v1/models`.
+   - On success it stores a synthetic, long-lived OAuth credential (`authMode: api_key`) so pi treats it like any other credential.
+5. **Credential storage** — Tokens are passed to pi's native credential store (`~/.pi/agent/auth.json`); the extension does not write credentials to its own files.
+6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials immediately. API key credentials never refresh.
+7. **Logout** — `/litellm:logout` calls the revoke endpoint with the current `refresh_token` for SSO and clears the pi credential entry. API key mode skips remote revocation because there is no refresh token.
 
 ## Security notes
 
@@ -56,3 +76,4 @@ sequenceDiagram
 - **Refresh rotation.** Each successful refresh returns a new refresh token; the old one is discarded and the new one is persisted via pi.
 - **Revoke on logout.** Logout tells the gateway to invalidate the refresh token server-side in addition to clearing local state.
 - **Credential storage delegated to pi.** The extension never writes tokens to its own cache or configuration files; pi's credential store is responsible for file permissions and encryption.
+- **API key validation.** API keys are checked against the gateway before storage, but they are otherwise stored by pi in `~/.pi/agent/auth.json` like any other credential. Treat them as secrets.

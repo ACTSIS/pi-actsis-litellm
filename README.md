@@ -18,7 +18,9 @@ pi -e .
 
 ## Configuration
 
-The gateway base URL is resolved at runtime only. Configure it via **one** of:
+Zero-config by default. Run `/login`, select `actsis-litellm`, enter the gateway base URL, and choose how to sign in.
+
+For non-interactive or headless setups you can still configure the gateway via:
 
 1. Environment variable:
    ```bash
@@ -38,7 +40,7 @@ Config file schema:
 }
 ```
 
-Only `baseUrl` is required. If it is missing from environment and config files, the `/login` flow will prompt you for the gateway URL.
+Only `baseUrl` is required in the config file. When no URL is configured at startup, the provider is still registered with a placeholder so that `/login` can prompt you for the URL interactively.
 
 ## Commands
 
@@ -53,15 +55,22 @@ Only `baseUrl` is required. If it is missing from environment and config files, 
 
 When you run `/login` and pick `actsis-litellm`:
 
-1. **Discovery** — The extension fetches `/.well-known/litellm-cli-auth` from the configured gateway to discover the OAuth endpoints.
-2. **Dynamic client registration** — A public, loopback-only OAuth client is registered with the gateway.
-3. **PKCE S256** — A local `code_verifier` is generated and hashed into a `code_challenge`.
-4. **Browser consent** — Your browser opens the authorization URL. The gateway authenticates you and shows a team/role picker.
-5. **Loopback callback** — After consent, the gateway redirects to `http://127.0.0.1:<ephemeral>/callback` with a single-use authorization `code` and the original `state`.
-6. **Token exchange** — The extension validates `state` and exchanges the `code` for an `access_token` and `refresh_token`.
-7. **Credential storage** — pi stores the credentials in `~/.pi/agent/auth.json`.
-8. **Refresh rotation** — On every renewal the gateway returns a new `refresh_token`; the extension updates the stored credentials automatically.
-9. **Logout** — `/litellm:logout` sends the current `refresh_token` to the gateway's revoke endpoint and clears the pi credential entry.
+1. **Gateway URL prompt** — If the gateway URL is not already configured, the extension asks you for it (e.g. `https://gateway.example.com`).
+2. **Sign-in method** — Choose **SSO (browser)** or **API key**.
+3. **SSO path (browser):**
+   - **Discovery** — The extension fetches `/.well-known/litellm-cli-auth` from the gateway.
+   - **Dynamic client registration** — A public, loopback-only OAuth client is registered.
+   - **PKCE S256** — A local `code_verifier` is generated and hashed into a `code_challenge`.
+   - **Browser consent** — Your browser opens the authorization URL. The gateway authenticates you and shows a team/role picker.
+   - **Loopback callback** — The gateway redirects to `http://127.0.0.1:<ephemeral>/callback` with an authorization `code` and the original `state`.
+   - **Token exchange** — The extension validates `state` and exchanges the `code` for an `access_token` and `refresh_token`.
+4. **API key path:**
+   - You are prompted for a LiteLLM API key (`sk-...`).
+   - The key is validated against `GET {gateway}/v1/models`.
+   - A long-lived synthetic OAuth credential is stored so pi treats it like any other credential.
+5. **Credential storage** — pi stores the resulting credentials in `~/.pi/agent/auth.json`.
+6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials automatically. API key credentials do not refresh.
+7. **Logout** — `/litellm:logout` clears local state and, for SSO, sends the `refresh_token` to the gateway's revoke endpoint.
 
 ## Model catalog
 
@@ -78,9 +87,10 @@ The provider's model list is synced from the gateway at `/v1/models` and enriche
 
 | Symptom | What to check |
 |---------|---------------|
-| Gateway URL not configured | Set `ACTSIS_LITELLM_URL`, create `~/.pi/agent/actsis-litellm.json` with `baseUrl`, or let `/login` prompt you. |
-| Credentials rejected by the gateway | Run `/login` again to obtain fresh tokens. |
-| Refresh refused (`invalid_grant`) | The refresh token may be expired, rotated by another client, or revoked. Run `/login` again. |
+| Gateway URL not configured | Run `/login`, pick `actsis-litellm`, and enter the gateway URL. Optional: set `ACTSIS_LITELLM_URL` or create `~/.pi/agent/actsis-litellm.json` with `baseUrl`. |
+| Credentials rejected by the gateway | For SSO, run `/login` again to obtain fresh tokens. For API key, check the key in the gateway UI and re-run `/login`. |
+| Refresh refused (`invalid_grant`) | The SSO refresh token may be expired, rotated by another client, or revoked. Run `/login` again. |
+| "Login cancelled" | The prompt or method selector was dismissed. Re-run `/login` and complete all steps. |
 | "Login timed out" | The loopback callback window is 5 minutes. If the browser step takes longer, restart `/login`. |
 | Models do not appear | Run `/litellm:models` to force a sync, then check `/litellm:status` for cache count and provider state. |
 
@@ -89,6 +99,7 @@ The provider's model list is synced from the gateway at `/v1/models` and enriche
 - The callback server binds to `127.0.0.1` on an ephemeral port only.
 - No gateway URL, hostname, IP, token, or user-identifiable data is embedded in the package.
 - Token storage is delegated to pi's credential store; the extension itself does not write credentials to disk.
+- API keys are validated before storage but are otherwise stored by pi in `~/.pi/agent/auth.json` like any other credential.
 
 For a detailed sequence diagram and security rationale, see [`docs/login-flow.md`](docs/login-flow.md).
 

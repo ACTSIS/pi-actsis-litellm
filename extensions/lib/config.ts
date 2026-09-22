@@ -64,6 +64,7 @@ export interface ConfigResolutionDeps {
   env: Record<string, string | undefined>;
   fileLoader: (path: string) => Promise<ConfigFileShape | null>;
   prompt: () => Promise<string | null | undefined>;
+  storedUrl?: string | null;
 }
 
 export async function resolveConfig(
@@ -82,6 +83,10 @@ export async function resolveConfig(
   }
 
   let rawUrl = envUrl || fileValue?.baseUrl?.trim();
+
+  if (!rawUrl) {
+    rawUrl = deps.storedUrl?.trim();
+  }
 
   if (!rawUrl) {
     const prompted = await deps.prompt();

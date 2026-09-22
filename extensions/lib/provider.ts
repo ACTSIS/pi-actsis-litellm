@@ -23,6 +23,8 @@ import {
   computeCacheAge,
 } from "./catalog.ts";
 import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
+import { readStoredCredentialGatewayUrl } from "./gateway-url.ts";
+import { fetchModels } from "./client.ts";
 
 export const CACHE_PATH = path.join(
   os.homedir(),
@@ -31,6 +33,10 @@ export const CACHE_PATH = path.join(
   "actsis-litellm-models-cache.json",
 );
 
+export function defaultAuthPath(): string {
+  return path.join(os.homedir(), ".pi", "agent", "auth.json");
+}
+
 interface ProviderBuildDeps {
   loadCachedModels: (cachePath: string) => Promise<ProviderModelConfig[] | null>;
   saveCachedModels: (
@@ -38,6 +44,7 @@ interface ProviderBuildDeps {
     models: ProviderModelConfig[],
   ) => Promise<void>;
   computeCacheAge: (cachePath: string) => Promise<number | null>;
+  onLoginSuccess?: (gatewayUrl: string) => Promise<void>;
 }
 
 export interface BuiltProviderConfig {
@@ -94,11 +101,32 @@ function createFileLoader(): ConfigResolutionDeps["fileLoader"] {
   };
 }
 
+async function resolveInteractiveConfig(
+  callbacks: Pick<OAuthLoginCallbacks, "onPrompt">,
+  providerId: string,
+): Promise<ActsisEnabledConfig> {
+  const storedUrl = await readStoredCredentialGatewayUrl(defaultAuthPath(), providerId);
+  return await resolveConfig({
+    env: process.env,
+    fileLoader: createFileLoader(),
+    storedUrl,
+    prompt: async () =>
+      callbacks.onPrompt({
+        message: "Gateway base URL (e.g. https://gateway.example.com)",
+      }),
+  });
+}
+
 async function resolveNonInteractiveConfig(): Promise<ActsisEnabledConfig | null> {
+  const storedUrl = await readStoredCredentialGatewayUrl(
+    defaultAuthPath(),
+    "actsis-litellm",
+  );
   try {
     return await resolveConfig({
       env: process.env,
       fileLoader: createFileLoader(),
+      storedUrl,
       prompt: async () => undefined,
     });
   } catch (err) {
@@ -107,13 +135,85 @@ async function resolveNonInteractiveConfig(): Promise<ActsisEnabledConfig | null
   }
 }
 
+interface LoginMethod {
+  id: "sso" | "api_key";
+  label: string;
+}
+
+async function selectLoginMethod(
+  callbacks: OAuthLoginCallbacks,
+): Promise<LoginMethod["id"]> {
+  const method = await callbacks.onSelect({
+    message: "Sign in to the LiteLLM gateway:",
+    options: [
+      { id: "sso", label: "Sign in with SSO (browser)" },
+      { id: "api_key", label: "Use an API key" },
+    ],
+  });
+  if (!method || (method !== "sso" && method !== "api_key")) {
+    throw new Error("Login cancelled.");
+  }
+  return method;
+}
+
+async function promptApiKey(callbacks: OAuthLoginCallbacks): Promise<string> {
+  const key = await callbacks.onPrompt({
+    message: "LiteLLM API key (sk-...)",
+  });
+  if (!key || !key.trim()) {
+    throw new Error("Login cancelled.");
+  }
+  return key.trim();
+}
+
+async function validateApiKey(
+  baseUrl: string,
+  key: string,
+  requestTimeoutMs: number,
+): Promise<void> {
+  try {
+    await fetchModels(baseUrl, key, requestTimeoutMs);
+  } catch (err) {
+    if (err instanceof AuthError) {
+      throw new Error("API key rejected by gateway. Verify the key and try again.");
+    }
+    throw err;
+  }
+}
+
+function synthesizeApiKeyCredentials(
+  baseUrl: string,
+  key: string,
+): OAuthCredentials {
+  const tenYearsMs = 10 * 365 * 24 * 60 * 60 * 1000;
+  return {
+    refresh: "",
+    access: key,
+    expires: Date.now() + tenYearsMs,
+    authMode: "api_key",
+    gatewayUrl: baseUrl,
+    tokenEndpoint: `${baseUrl}/token (not used)`,
+    revocationEndpoint: "",
+    resource: baseUrl,
+    clientId: "",
+    userId: undefined,
+    teamId: undefined,
+  } as unknown as OAuthCredentials;
+}
+
 export async function buildProviderConfig(
-  cfg: ActsisEnabledConfig,
+  cfg: ActsisEnabledConfig | null,
   deps?: Partial<ProviderBuildDeps>,
 ): Promise<BuiltProviderConfig> {
   const loadCache = deps?.loadCachedModels ?? loadCachedModels;
   const saveCache = deps?.saveCachedModels ?? saveCachedModels;
   const cacheAge = deps?.computeCacheAge ?? computeCacheAge;
+  const onLoginSuccess = deps?.onLoginSuccess;
+
+  const providerId = cfg?.providerId ?? "actsis-litellm";
+  const requestTimeoutMs = cfg?.requestTimeoutMs ?? 30_000;
+  const catalogTtlMs = cfg?.catalogTtlMs ?? 15 * 60 * 1000;
+  const baseUrl = cfg?.baseUrl ?? "";
 
   const cached = await loadCache(CACHE_PATH);
   const initialModels = cached ?? [];
@@ -121,24 +221,29 @@ export async function buildProviderConfig(
   const oauth = {
     name: "LiteLLM Gateway (SSO)",
     async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-      const config = await resolveConfig({
-        env: process.env,
-        fileLoader: createFileLoader(),
-        prompt: async () =>
-          callbacks.onPrompt({
-            message:
-              "Gateway base URL (e.g. https://gateway.example.com)",
-          }),
-      });
+      const config = await resolveInteractiveConfig(callbacks, providerId);
       let schemeUpgraded = false;
-      const discovery = await fetchCliAuthDiscovery(
-        config.baseUrl,
-        config.requestTimeoutMs,
-        (adaptation) => {
-          schemeUpgraded = true;
-        },
-      );
-      const credentials = await runLoginFlow(config, discovery, callbacks, { schemeUpgraded });
+
+      const method = await selectLoginMethod(callbacks);
+
+      let credentials: OAuthCredentials;
+      if (method === "sso") {
+        const discovery = await fetchCliAuthDiscovery(
+          config.baseUrl,
+          config.requestTimeoutMs,
+          (adaptation) => {
+            schemeUpgraded = true;
+            callbacks.onProgress?.(
+              "Gateway advertises http:// endpoints; using https:// (scheme upgrade applied).",
+            );
+          },
+        );
+        credentials = await runLoginFlow(config, discovery, callbacks, { schemeUpgraded });
+      } else {
+        const key = await promptApiKey(callbacks);
+        await validateApiKey(config.baseUrl, key, config.requestTimeoutMs);
+        credentials = synthesizeApiKeyCredentials(config.baseUrl, key);
+      }
 
       // Best-effort budget summary after login; non-fatal.
       try {
@@ -154,25 +259,35 @@ export async function buildProviderConfig(
         // Swallow: budget reporting is informative, not a login gate.
       }
 
+      try {
+        await onLoginSuccess?.(config.baseUrl);
+      } catch {
+        // Non-fatal: re-registration failure should not block credential return.
+      }
+
       return credentials;
     },
-    async refreshToken(
+  async refreshToken(
       credentials: OAuthCredentials,
       signal: AbortSignal,
     ): Promise<OAuthCredentials> {
+      if (credentials.authMode === "api_key" || !credentials.refresh) {
+        return credentials;
+      }
+
       const refreshToken =
         typeof credentials.refresh === "string" ? credentials.refresh : "";
-      const clientId =
-        typeof credentials.clientId === "string" ? credentials.clientId : "";
       if (!refreshToken) {
         throw new AuthError("No refresh token stored; run /login again.");
       }
 
+      const clientId =
+        typeof credentials.clientId === "string" ? credentials.clientId : "";
       const discovery = storedToDiscovery(credentials);
       const refreshed = await refreshGrant(
         discovery,
         { refreshToken, clientId },
-        cfg.requestTimeoutMs,
+        requestTimeoutMs,
       );
 
       const expires =
@@ -215,16 +330,21 @@ export async function buildProviderConfig(
       return storedModels;
     }
 
+    const refreshCfg = await resolveNonInteractiveConfig();
+    if (!refreshCfg) {
+      return storedModels;
+    }
+
     const age = await cacheAge(CACHE_PATH);
     const hasFreshCache =
-      age !== null && age < cfg.catalogTtlMs && storedModels.length > 0;
+      age !== null && age < refreshCfg.catalogTtlMs && storedModels.length > 0;
     if (!context.force && hasFreshCache) {
       return storedModels;
     }
 
     let freshModels: ProviderModelConfig[];
     try {
-      freshModels = await fetchCatalogModels(cfg, apiKey, context.signal);
+      freshModels = await fetchCatalogModels(refreshCfg, apiKey, context.signal);
     } catch (err) {
       return storedModels;
     }
@@ -244,7 +364,7 @@ export async function buildProviderConfig(
 
   return {
     name: "LiteLLM Gateway",
-    baseUrl: `${cfg.baseUrl}/v1`,
+    baseUrl: baseUrl ? `${baseUrl}/v1` : "",
     api: "openai-completions",
     models: initialModels,
     oauth,
