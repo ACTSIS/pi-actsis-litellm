@@ -47,9 +47,9 @@ Only `baseUrl` is required in the config file. When no URL is configured at star
 | Command | Description |
 |---------|-------------|
 | `/login` | pi's native login flow. Once this provider is registered, select `actsis-litellm` to authenticate. |
-| `/litellm:status` | Show credential state, cache age, and provider status. |
-| `/litellm:models` | Force a fresh model catalog sync and show added/removed models. |
-| `/litellm:logout` | Revoke the refresh token and clear local credentials. |
+| `/actsis-litellm:status` | Show credential state, cache age, and provider status. |
+| `/actsis-litellm:models` | Force a fresh model catalog sync and show added/removed models. |
+| `/actsis-litellm:logout` | Revoke the refresh token and clear local credentials. |
 
 ## Login flow
 
@@ -70,7 +70,7 @@ When you run `/login` and pick `actsis-litellm`:
    - A long-lived synthetic OAuth credential is stored so pi treats it like any other credential.
 5. **Credential storage** — pi stores the resulting credentials in `~/.pi/agent/auth.json`.
 6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials automatically. API key credentials do not refresh.
-7. **Logout** — `/litellm:logout` clears local state and, for SSO, sends the `refresh_token` to the gateway's revoke endpoint.
+7. **Logout** — `/actsis-litellm:logout` clears local state and, for SSO, sends the `refresh_token` to the gateway's revoke endpoint.
 
 ## Model catalog
 
@@ -78,7 +78,7 @@ The provider's model list is synced from the gateway at `/v1/models` and enriche
 
 - **Cache location:** `~/.pi/agent/actsis-litellm-models-cache.json`
 - **Default TTL:** 15 minutes (`catalogTtlMinutes`)
-- **Force sync:** Run `/litellm:models`
+- **Force sync:** Run `/actsis-litellm:models`
 - **Cost mapping:** LiteLLM input/output costs are mapped to pi cost fields per 1 million tokens. Missing or zero values default to `0`.
 - **Context defaults:** `contextWindow` and `maxTokens` default to `128000` and `16384` when the gateway does not report them.
 - **Overrides:** You can override any model's metadata via pi's `models.json` `modelOverrides` mechanism.
@@ -92,7 +92,7 @@ The provider's model list is synced from the gateway at `/v1/models` and enriche
 | Refresh refused (`invalid_grant`) | The SSO refresh token may be expired, rotated by another client, or revoked. Run `/login` again. |
 | "Login cancelled" | The prompt or method selector was dismissed. Re-run `/login` and complete all steps. |
 | "Login timed out" | The loopback callback window is 5 minutes. If the browser step takes longer, restart `/login`. |
-| Models do not appear | Run `/litellm:models` to force a sync, then check `/litellm:status` for cache count and provider state. |
+| Models do not appear | Run `/actsis-litellm:models` to force a sync, then check `/actsis-litellm:status` for cache count and provider state. |
 
 ## Security notes
 

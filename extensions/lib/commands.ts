@@ -215,7 +215,7 @@ export function buildStatusHandler(deps: CommandDeps) {
       notify(ctx, textLines.join("\n"), "info");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      notify(ctx, `litellm:status failed: ${message}`, "error");
+      notify(ctx, `actsis-litellm:status failed: ${message}`, "error");
     }
   };
 }
@@ -257,7 +257,7 @@ export function buildModelsCommandHandler(deps: CommandDeps) {
       notify(ctx, message, "info");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      notify(ctx, `litellm:models failed: ${message}`, "error");
+      notify(ctx, `actsis-litellm:models failed: ${message}`, "error");
     }
   };
 }
@@ -345,7 +345,7 @@ export function buildLogoutHandler(deps: CommandDeps) {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      notify(ctx, `litellm:logout failed: ${message}`, "error");
+      notify(ctx, `actsis-litellm:logout failed: ${message}`, "error");
     }
   };
 }

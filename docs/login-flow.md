@@ -66,7 +66,7 @@ sequenceDiagram
    - On success it stores a synthetic, long-lived OAuth credential (`authMode: api_key`) so pi treats it like any other credential.
 5. **Credential storage** — Tokens are passed to pi's native credential store (`~/.pi/agent/auth.json`); the extension does not write credentials to its own files.
 6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials immediately. API key credentials never refresh.
-7. **Logout** — `/litellm:logout` calls the revoke endpoint with the current `refresh_token` for SSO and clears the pi credential entry. API key mode skips remote revocation because there is no refresh token.
+7. **Logout** — `/actsis-litellm:logout` calls the revoke endpoint with the current `refresh_token` for SSO and clears the pi credential entry. API key mode skips remote revocation because there is no refresh token.
 
 ## Security notes
 

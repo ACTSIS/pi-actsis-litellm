@@ -179,17 +179,17 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   const commandDeps = defaultCommandDeps();
   commandDeps.getState = () => state;
 
-  pi.registerCommand("litellm:status", {
+  pi.registerCommand("actsis-litellm:status", {
     description: "Show LiteLLM gateway status and model cache state",
     handler: buildStatusHandler(commandDeps),
   });
 
-  pi.registerCommand("litellm:models", {
+  pi.registerCommand("actsis-litellm:models", {
     description: "Force-sync LiteLLM model catalog and show changes",
     handler: buildModelsCommandHandler(commandDeps),
   });
 
-  pi.registerCommand("litellm:logout", {
+  pi.registerCommand("actsis-litellm:logout", {
     description: "Revoke LiteLLM credentials and clear local state",
     handler: buildLogoutHandler(commandDeps),
   });

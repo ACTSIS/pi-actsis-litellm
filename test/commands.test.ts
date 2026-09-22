@@ -118,7 +118,7 @@ describe("commands", () => {
     };
   });
 
-  describe("litellm:status", () => {
+  describe("actsis-litellm:status", () => {
     it("notifies config-missing message when no config is resolved", async () => {
       const ctx = makeMockCtx();
       const handler = buildStatusHandler(deps);
@@ -194,7 +194,7 @@ describe("commands", () => {
     });
   });
 
-  describe("litellm:models", () => {
+  describe("actsis-litellm:models", () => {
     it("refreshes and reports the filtered model count", async () => {
       const refreshCalls: Array<unknown> = [];
       const ctx = makeMockCtx({
@@ -246,7 +246,7 @@ describe("commands", () => {
     });
   });
 
-  describe("litellm:logout", () => {
+  describe("actsis-litellm:logout", () => {
     it("notifies when there are no stored credentials", async () => {
       const ctx = makeMockCtx({
         modelRegistry: makeMockRegistry({
