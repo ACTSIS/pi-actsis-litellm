@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+
+# Local environment
+.env*
+
+# Pi runtime state
+.atl/
+
+# Internal planning artifacts
+odd/
+
+# Local gateway config (contains real URL, never commit)
+.pi/actsis-litellm.user.json

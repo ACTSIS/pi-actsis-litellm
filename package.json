@@ -1,0 +1,33 @@
+{
+  "name": "pi-actsis-litellm",
+  "version": "0.1.0",
+  "description": "Pi extension for a LiteLLM gateway provider with OAuth PKCE login and dynamic model catalog.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test --experimental-strip-types test/"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "litellm",
+    "oauth",
+    "provider"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "typescript": "^7.0.2"
+  }
+}
