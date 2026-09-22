@@ -9,6 +9,7 @@ import {
   buildLogoutHandler,
   defaultCommandDeps,
 } from "./lib/commands.ts";
+import { normalizeOverflowError } from "./lib/overflow.ts";
 
 export interface LiteLLMExtensionState {
   providerId?: string;
@@ -38,6 +39,23 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   pi.registerCommand("litellm:logout", {
     description: "Revoke LiteLLM credentials and clear local state",
     handler: buildLogoutHandler(commandDeps),
+  });
+
+  pi.on("message_end", async (event, ctx) => {
+    const rewritten = normalizeOverflowError(
+      state.providerId,
+      event.message as {
+        role: string;
+        stopReason?: string;
+        errorMessage?: string;
+        provider?: string;
+      },
+      ctx?.model?.provider,
+    );
+    if (rewritten) {
+      return { message: rewritten as never };
+    }
+    return undefined;
   });
 
   pi.on("session_start", async (_event, ctx) => {
