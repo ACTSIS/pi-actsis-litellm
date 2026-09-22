@@ -249,28 +249,37 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     state.catalogCount = providerConfig.models.length;
   }
 
+  function buildOnLoginSuccess(fallbackId: string): {
+    onLoginSuccess: (gatewayUrl: string) => Promise<void>;
+  } {
+    return {
+      onLoginSuccess: async (_gatewayUrl) => {
+        try {
+          await registerWithConfig(state.providerId ?? fallbackId);
+        } catch (err) {
+          // Non-fatal: login already succeeded, re-registration is best-effort.
+          if (err instanceof ConfigError) {
+            pi.on("session_start", async (_event, ctx) => {
+              if (ctx.hasUI) {
+                ctx.ui.notify(
+                  "pi-actsis-litellm: run /login to configure the gateway",
+                  "info",
+                );
+              }
+            });
+          }
+        }
+      },
+    };
+  }
+
   async function registerBestEffort(): Promise<void> {
     const cfg = await resolveStartupConfig();
     if (cfg) {
-      const providerConfig = await buildProviderConfig(cfg, {
-        onLoginSuccess: async (_gatewayUrl) => {
-          try {
-            await registerWithConfig(state.providerId ?? cfg.providerId);
-          } catch (err) {
-            // Non-fatal: login already succeeded, re-registration is best-effort.
-            if (err instanceof ConfigError) {
-              pi.on("session_start", async (_event, ctx) => {
-                if (ctx.hasUI) {
-                  ctx.ui.notify(
-                    "pi-actsis-litellm: run /login to configure the gateway",
-                    "info",
-                  );
-                }
-              });
-            }
-          }
-        },
-      });
+      const providerConfig = await buildProviderConfig(
+        cfg,
+        buildOnLoginSuccess(cfg.providerId),
+      );
       pi.registerProvider(cfg.providerId, providerConfig);
       state.providerId = cfg.providerId;
       state.catalogCount = providerConfig.models.length;
@@ -278,7 +287,12 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     }
 
     // No URL configured yet: register a placeholder so /login still works.
-    const placeholderConfig = await buildProviderConfig(null);
+    // R3-001 fix: the placeholder MUST receive onLoginSuccess so a login
+    // performed through it re-registers the provider with the real URL.
+    const placeholderConfig = await buildProviderConfig(
+      null,
+      buildOnLoginSuccess("actsis-litellm"),
+    );
     pi.registerProvider("actsis-litellm", placeholderConfig);
     state.providerId = "actsis-litellm";
 
