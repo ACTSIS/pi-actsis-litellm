@@ -219,7 +219,7 @@ export async function buildProviderConfig(
   const initialModels = cached ?? [];
 
   const oauth = {
-    name: "LiteLLM Gateway (SSO)",
+    name: "Actsis LiteLLM (SSO)",
     async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
       const config = await resolveInteractiveConfig(callbacks, providerId);
       let schemeUpgraded = false;
@@ -388,7 +388,7 @@ export async function buildProviderConfig(
   }
 
   return {
-    name: "LiteLLM Gateway",
+    name: "Actsis LiteLLM",
     baseUrl: baseUrl ? `${baseUrl}/v1` : "",
     api: "openai-completions",
     models: initialModels,

@@ -2,6 +2,7 @@
 
 ## 0.1.0 — Unreleased
 
+- **Provider branding** — The provider shows up in `/login` and the model registry as **Actsis LiteLLM** (auth method `Actsis LiteLLM (SSO)`) instead of the generic "LiteLLM Gateway" label.
 - **Zero-config /login flow** — The provider is always registered at startup. If no gateway URL is configured, `/login` asks for the URL, lets you choose between SSO (browser PKCE) and API key, and validates API keys against `GET /v1/models` before storing a synthetic long-lived credential. After any successful login the provider is re-registered with the real base URL so `/model` works immediately.
 - **Configuration module** — Runtime-only gateway base URL resolution via `ACTSIS_LITELLM_URL`, optional global config (`~/.pi/agent/actsis-litellm.json`), optional project-local config, or `/login` prompt. Configurable catalog TTL and request timeout.
 - **LiteLLM CLI-OAuth client** — Discovery (`/.well-known/litellm-cli-auth`), dynamic client registration, token exchange, refresh with rotation, revoke, `/v1/models` and `/model/info` endpoints. Redirects are never followed on register/token/revoke.
