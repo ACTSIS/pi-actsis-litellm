@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConfigFileShape } from "./lib/config.ts";
 import { buildProviderConfig } from "./lib/provider.ts";
 import { ConfigError } from "./lib/errors.ts";
@@ -10,6 +11,11 @@ import {
   defaultCommandDeps,
 } from "./lib/commands.ts";
 import { normalizeOverflowError } from "./lib/overflow.ts";
+import {
+  normalizeLimitError,
+  budgetUsagePercent,
+} from "./lib/limit-errors.ts";
+import { fetchBudgetInfo, formatBudgetLine } from "./lib/budget.ts";
 
 export interface LiteLLMExtensionState {
   providerId?: string;
@@ -20,6 +26,107 @@ export interface LiteLLMExtensionState {
 
 // Shared mutable state for T6 commands.
 const state: LiteLLMExtensionState = {};
+
+function isOAuthCredential(
+  credential: unknown,
+): credential is { type: "oauth"; access: string } {
+  return (
+    typeof credential === "object" &&
+    credential !== null &&
+    (credential as Record<string, unknown>).type === "oauth" &&
+    typeof (credential as Record<string, unknown>).access === "string"
+  );
+}
+
+async function getBaseUrl(): Promise<string | null> {
+  try {
+    const cfg = await resolveConfig({
+      env: process.env,
+      fileLoader: async (filePath) => {
+        try {
+          const { readFile } = await import("node:fs/promises");
+          const raw = await readFile(filePath, "utf8");
+          return JSON.parse(raw) as ConfigFileShape;
+        } catch {
+          return null;
+        }
+      },
+      prompt: async () => undefined,
+    });
+    return cfg.baseUrl;
+  } catch {
+    return null;
+  }
+}
+
+interface WidgetContext {
+  modelRegistry: {
+    getProviderAuth(providerId: string): Promise<unknown>;
+  };
+  ui: {
+    setWidget(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void;
+  };
+  hasUI: boolean;
+}
+
+async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
+  if (!ctx.hasUI) return;
+
+  try {
+    const providerId = state.providerId;
+    if (!providerId) {
+      ctx.ui.setWidget("actsis-litellm-budget", undefined);
+      return;
+    }
+
+    const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
+    const credential =
+      authResult && typeof authResult === "object" && "credential" in authResult
+        ? (authResult as { credential?: unknown }).credential
+        : undefined;
+    if (!isOAuthCredential(credential)) {
+      ctx.ui.setWidget("actsis-litellm-budget", undefined);
+      return;
+    }
+
+    const baseUrl = await getBaseUrl();
+    if (!baseUrl) {
+      ctx.ui.setWidget("actsis-litellm-budget", undefined);
+      return;
+    }
+
+    const cfg = await resolveConfig({
+      env: process.env,
+      fileLoader: async (filePath) => {
+        try {
+          const { readFile } = await import("node:fs/promises");
+          const raw = await readFile(filePath, "utf8");
+          return JSON.parse(raw) as ConfigFileShape;
+        } catch {
+          return null;
+        }
+      },
+      prompt: async () => undefined,
+    });
+
+    const info = await fetchBudgetInfo(baseUrl, credential.access, cfg.requestTimeoutMs);
+    const line = formatBudgetLine(info);
+    if (line) {
+      const percent = budgetUsagePercent(info.spend, info.maxBudget);
+      if (percent >= 90) {
+        ctx.ui.setWidget("actsis-litellm-budget", [line, "Budget at 90%+ — top up soon to avoid interruption."], {
+          placement: "belowEditor",
+        });
+      } else {
+        ctx.ui.setWidget("actsis-litellm-budget", [line], { placement: "belowEditor" });
+      }
+    } else {
+      ctx.ui.setWidget("actsis-litellm-budget", undefined);
+    }
+  } catch {
+    ctx.ui.setWidget("actsis-litellm-budget", undefined);
+  }
+}
 
 export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   // Register commands first; they work independently of provider registration.
@@ -42,19 +149,34 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   });
 
   pi.on("message_end", async (event, ctx) => {
-    const rewritten = normalizeOverflowError(
+    const message = event.message as {
+      role: string;
+      stopReason?: string;
+      errorMessage?: string;
+      provider?: string;
+    };
+
+    const overflowRewrite = normalizeOverflowError(
       state.providerId,
-      event.message as {
-        role: string;
-        stopReason?: string;
-        errorMessage?: string;
-        provider?: string;
-      },
+      message,
       ctx?.model?.provider,
     );
-    if (rewritten) {
-      return { message: rewritten as never };
+    if (overflowRewrite) {
+      // Budget widget refresh is only relevant when this is not an overflow,
+      // but refresh reactively on any 429 classification is handled next.
+      return { message: overflowRewrite as unknown as AssistantMessage };
     }
+
+    const limitRewrite = normalizeLimitError(
+      state.providerId,
+      message,
+      ctx?.model?.provider,
+    );
+    if (limitRewrite) {
+      await refreshBudgetWidget(ctx as unknown as WidgetContext);
+      return { message: limitRewrite as unknown as AssistantMessage };
+    }
+
     return undefined;
   });
 
@@ -62,6 +184,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     if (ctx.hasUI) {
       ctx.ui.notify("pi-actsis-litellm loaded", "info");
     }
+    await refreshBudgetWidget(ctx as unknown as WidgetContext);
   });
 
   // Attempt quiet config resolution. If the gateway URL is not configured

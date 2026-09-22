@@ -22,6 +22,7 @@ import {
   saveCachedModels,
   computeCacheAge,
 } from "./catalog.ts";
+import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
 
 export const CACHE_PATH = path.join(
   os.homedir(),
@@ -137,7 +138,23 @@ export async function buildProviderConfig(
           schemeUpgraded = true;
         },
       );
-      return runLoginFlow(config, discovery, callbacks, { schemeUpgraded });
+      const credentials = await runLoginFlow(config, discovery, callbacks, { schemeUpgraded });
+
+      // Best-effort budget summary after login; non-fatal.
+      try {
+        const apiKey = typeof credentials.access === "string" ? credentials.access : "";
+        if (apiKey) {
+          const info = await fetchBudgetInfo(config.baseUrl, apiKey, config.requestTimeoutMs);
+          const line = formatBudgetLine(info);
+          if (line) {
+            callbacks.onProgress?.(`Budget: ${line}`);
+          }
+        }
+      } catch {
+        // Swallow: budget reporting is informative, not a login gate.
+      }
+
+      return credentials;
     },
     async refreshToken(
       credentials: OAuthCredentials,

@@ -5,7 +5,8 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { Api, AuthResult, Model } from "@earendil-works/pi-ai";
 import type { OAuthCredential } from "@earendil-works/pi-ai/compat";
 import { resolveConfig, type ActsisEnabledConfig } from "./config.ts";
-import { ConfigError } from "./errors.ts";
+import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
+import { AuthError, ConfigError } from "./errors.ts";
 import { revokeToken, type CliAuthDiscovery } from "./client.ts";
 import { storedToDiscovery } from "./provider.ts";
 import { loadCachedModels, computeCacheAge } from "./catalog.ts";
@@ -175,14 +176,36 @@ export function buildStatusHandler(deps: CommandDeps) {
       const count = providerModels(ctx.modelRegistry.getAll(), providerId).length;
       const age = await computeCacheAge(deps.cachePath);
 
-      const text = [
+      let budgetLine: string | null = null;
+      try {
+        if (oauthCredential) {
+          const info = await fetchBudgetInfo(
+            cfg.baseUrl,
+            oauthCredential.access,
+            deps.requestTimeoutMs,
+          );
+          const line = formatBudgetLine(info);
+          budgetLine = line ? `Budget: ${line}` : null;
+        }
+      } catch (err) {
+        if (err instanceof AuthError) {
+          budgetLine = "Budget: Credential rejected — run /login again";
+        } else {
+          budgetLine = `Budget: unavailable (${err instanceof Error ? err.message : String(err)})`;
+        }
+      }
+
+      const textLines = [
         `Provider: ${providerId} — ${registered ? "registered" : "not registered"}`,
         authLine,
         sourceLine,
         `Catalog: ${count} models for provider, cache age: ${formatCacheAge(age)}`,
         `Gateway: ${cfg.baseUrl}`,
-      ].join("\n");
-      notify(ctx, text, "info");
+      ];
+      if (budgetLine) {
+        textLines.push(budgetLine);
+      }
+      notify(ctx, textLines.join("\n"), "info");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `litellm:status failed: ${message}`, "error");
