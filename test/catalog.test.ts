@@ -476,4 +476,114 @@ describe("buildProviderConfig", () => {
 
     assert.deepEqual(result, stored);
   });
+
+  it("refreshModels degrades gracefully when cache save fails", async () => {
+    const stored = [makeStored("kept")];
+    // Expected mapped shape: fetchCatalogModels/infoToConfig defaults
+    // (reasoning, contextWindow, maxTokens, compat) override the stored
+    // fixture values for gateway-fetched models.
+    const fresh: ProviderModelConfig[] = [
+      {
+        ...makeStored("fresh-from-gateway"),
+        reasoning: true,
+        contextWindow: 128000,
+        maxTokens: 16384,
+        compat: { supportsDeveloperRole: false },
+      },
+    ];
+
+    globalThis.fetch = async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/models")) {
+        return new Response(JSON.stringify({ data: [{ id: "fresh-from-gateway" }] }), {
+          status: 200,
+        });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    let saveCount = 0;
+    const provider = await buildProviderConfig(
+      { ...baseCfg, catalogTtlMs: 0 },
+      {
+        loadCachedModels: () => Promise.resolve(stored),
+        saveCachedModels: async () => {
+          saveCount++;
+          throw new Error("EACCES: disk full");
+        },
+        computeCacheAge: async () => null,
+      },
+    );
+
+    const credential = {
+      type: "oauth" as const,
+      access: "key",
+      refresh: "refresh",
+      expires: Date.now() + 3600_000,
+    };
+
+    // refreshModels must not reject: pi renders "Could not refresh <provider>;
+    // showing cached models" whenever it throws, even with fresh models usable.
+    const result = await provider.refreshModels(
+      mockRefreshContext({ allowNetwork: true, credential, stored, force: true }),
+    );
+
+    assert.equal(saveCount, 1);
+    assert.deepEqual(result, fresh);
+  });
+
+  it("refreshModels degrades gracefully when publish rejects", async () => {
+    const stored = [makeStored("kept")];
+    const fresh: ProviderModelConfig[] = [
+      {
+        ...makeStored("fresh-from-gateway"),
+        reasoning: true,
+        contextWindow: 128000,
+        maxTokens: 16384,
+        compat: { supportsDeveloperRole: false },
+      },
+    ];
+
+    globalThis.fetch = async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/models")) {
+        return new Response(JSON.stringify({ data: [{ id: "fresh-from-gateway" }] }), {
+          status: 200,
+        });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const provider = await buildProviderConfig(
+      { ...baseCfg, catalogTtlMs: 0 },
+      {
+        loadCachedModels: () => Promise.resolve(stored),
+        saveCachedModels: async () => {},
+        computeCacheAge: async () => null,
+      },
+    );
+
+    const credential = {
+      type: "oauth" as const,
+      access: "key",
+      refresh: "refresh",
+      expires: Date.now() + 3600_000,
+    };
+
+    const context = mockRefreshContext({
+      allowNetwork: true,
+      credential,
+      stored,
+      force: true,
+    });
+    // Transient models-store write failure (lock contention between concurrent
+    // pi sessions) must not surface as a catalog refresh error.
+    context.publish = async () => {
+      throw new Error("models-store lock contention");
+    };
+
+    const result = await provider.refreshModels(context);
+
+    assert.deepEqual(result, fresh);
+  });
 });

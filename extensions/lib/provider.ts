@@ -359,15 +359,30 @@ export async function buildProviderConfig(
       return storedModels;
     }
 
-    await saveCache(CACHE_PATH, freshModels);
+    // Persist and publish best-effort: pi renders "Could not refresh <provider>;
+    // showing cached models" whenever refreshModels throws, so neither the disk
+    // cache write nor the models-store publish may reject on transient IO/lock
+    // contention (models-store.json is lock-protected and shared across pi
+    // sessions). The fetched models are still returned for this refresh; the
+    // next refresh retries persistence.
+    try {
+      await saveCache(CACHE_PATH, freshModels);
+    } catch {
+      // Cache write failure is non-fatal: catalog remains usable in memory.
+    }
 
     // Publish the updated catalog to Pi's persistent models store.
-    await context.publish({
-      persist: {
-        models: freshModels as unknown as import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api>[],
-        checkedAt: Date.now(),
-      },
-    });
+    try {
+      await context.publish({
+        persist: {
+          models: freshModels as unknown as import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api>[],
+          checkedAt: Date.now(),
+        },
+      });
+    } catch {
+      // Store publish failure is non-fatal for the same reason; pi keeps the
+      // previous stored entry and the next refresh retries.
+    }
 
     return freshModels;
   }
