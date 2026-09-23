@@ -19,7 +19,7 @@ import {
   normalizeLimitError,
   budgetUsagePercent,
 } from "./lib/limit-errors.ts";
-import { fetchBudgetInfo, formatBudgetLine } from "./lib/budget.ts";
+import { fetchBudgetInfo, type BudgetInfo } from "./lib/budget.ts";
 
 export interface LiteLLMExtensionState {
   providerId?: string;
@@ -76,8 +76,34 @@ interface WidgetContext {
   };
   ui: {
     setWidget(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void;
+    setStatus?(key: string, text: string | undefined): void;
   };
   hasUI: boolean;
+}
+
+// Shared gauge glyphs with gentle-pi's shell (▰ filled / ▱ empty, 8 cells),
+// re-implemented locally so this extension renders the same visual language
+// without importing or depending on gentle-pi being installed.
+const BUDGET_STATUS_KEY = "actsis-litellm:budget";
+const GAUGE_CELLS = 8;
+const GAUGE_FILLED = "▰";
+const GAUGE_EMPTY = "▱";
+
+function budgetGauge(percent: number): string {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((clamped / 100) * GAUGE_CELLS);
+  return GAUGE_FILLED.repeat(filled) + GAUGE_EMPTY.repeat(GAUGE_CELLS - filled);
+}
+
+function budgetStatusText(info: BudgetInfo): string | undefined {
+  if (info.spend === null) return undefined;
+  const spend = `$${info.spend.toFixed(2)}`;
+  if (info.maxBudget !== null && info.maxBudget > 0) {
+    const percent = budgetUsagePercent(info.spend, info.maxBudget);
+    const cap = `$${info.maxBudget.toFixed(2)}`;
+    return `Budget ${budgetGauge(percent)} ${Math.round(percent)}% · ${spend}/${cap}`;
+  }
+  return `Budget ${spend} used (no cap)`;
 }
 
 async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
@@ -129,26 +155,15 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
     });
 
     const info = await fetchBudgetInfo(baseUrl, apiKey, cfg.requestTimeoutMs);
-    const line = formatBudgetLine(info);
-    if (line) {
-      const percent = budgetUsagePercent(info.spend, info.maxBudget);
-      if (percent >= 90) {
-        ctx.ui.setWidget("actsis-litellm-budget", [line, "Budget at 90%+ — top up soon to avoid interruption."], {
-          placement: "belowEditor",
-        });
-      } else {
-        ctx.ui.setWidget("actsis-litellm-budget", [line], { placement: "belowEditor" });
-      }
+    const text = budgetStatusText(info);
+    if (text) {
+      ctx.ui.setStatus?.(BUDGET_STATUS_KEY, text);
     } else {
-      ctx.ui.setWidget("actsis-litellm-budget", undefined);
+      ctx.ui.setStatus?.(BUDGET_STATUS_KEY, undefined);
     }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    ctx.ui.setWidget(
-      "actsis-litellm-budget",
-      [`Budget: unavailable — ${reason}`],
-      { placement: "belowEditor" },
-    );
+    ctx.ui.setStatus?.(BUDGET_STATUS_KEY, `Budget unavailable: ${reason}`);
   }
 }
 
