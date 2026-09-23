@@ -129,8 +129,13 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
     } else {
       ctx.ui.setWidget("actsis-litellm-budget", undefined);
     }
-  } catch {
-    ctx.ui.setWidget("actsis-litellm-budget", undefined);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    ctx.ui.setWidget(
+      "actsis-litellm-budget",
+      [`Budget: unavailable — ${reason}`],
+      { placement: "belowEditor" },
+    );
   }
 }
 

@@ -113,6 +113,66 @@ describe("budget", () => {
         (err) => err instanceof AuthError,
       );
     });
+
+    it("falls back to /user/info when /key/info rejects an SSO credential", async () => {
+      const urls: string[] = [];
+      mockFetch(async (input) => {
+        const url = typeof input === "string" ? input : input.toString();
+        urls.push(url);
+        if (url.endsWith("/key/info")) {
+          return new Response(
+            JSON.stringify({
+              error: { message: "Key not found in database" },
+            }),
+            { status: 404 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            user_info: {
+              user_alias: "RPINTO",
+              spend: 35.63,
+              max_budget: null,
+            },
+          }),
+          { status: 200 },
+        );
+      });
+
+      const info = await fetchBudgetInfo(
+        "https://gateway.example.com",
+        "sso-token",
+        30_000,
+      );
+
+      assert.deepEqual(
+        urls.map((url) => url.replace("https://gateway.example.com", "")),
+        ["/key/info", "/user/info"],
+      );
+      assert.equal(info.spend, 35.63);
+      assert.equal(info.maxBudget, null);
+      assert.equal(info.keyAlias, "RPINTO");
+      assert.equal(info.tpmLimit, null);
+      assert.equal(info.rpmLimit, null);
+      assert.equal(info.budgetResetAt, null);
+    });
+
+    it("does not fall back to /user/info on credential rejection", async () => {
+      const urls: string[] = [];
+      mockFetch(async (input) => {
+        const url = typeof input === "string" ? input : input.toString();
+        urls.push(url);
+        return new Response("Unauthorized", { status: 401 });
+      });
+
+      await assert.rejects(
+        fetchBudgetInfo("https://gateway.example.com", "key", 30_000),
+        (err) => err instanceof AuthError,
+      );
+
+      assert.equal(urls.length, 1);
+      assert.ok(urls[0].endsWith("/key/info"));
+    });
   });
 
   describe("formatBudgetLine", () => {

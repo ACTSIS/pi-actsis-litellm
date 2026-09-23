@@ -44,6 +44,22 @@ export async function fetchBudgetInfo(
   apiKey: string,
   timeoutMs: number,
 ): Promise<BudgetInfo> {
+  try {
+    return await fetchKeyInfoBudget(baseUrl, apiKey, timeoutMs);
+  } catch (err) {
+    // SSO credentials are not LiteLLM virtual keys, so /key/info rejects them
+    // (404/500 from the proxy). Fall back to /user/info, which accepts the
+    // SSO token and reports the user-level spend/budget.
+    if (err instanceof AuthError) throw err;
+    return fetchUserInfoBudget(baseUrl, apiKey, timeoutMs);
+  }
+}
+
+async function fetchKeyInfoBudget(
+  baseUrl: string,
+  apiKey: string,
+  timeoutMs: number,
+): Promise<BudgetInfo> {
   const normalized = baseUrl.replace(/\/+$/, "");
   let response: Response;
   try {
@@ -92,6 +108,73 @@ export async function fetchBudgetInfo(
       typeof record.key_alias === "string" && record.key_alias
         ? record.key_alias
         : null,
+  };
+}
+
+interface UserInfoResponse {
+  user_info?: {
+    spend?: unknown;
+    max_budget?: unknown;
+    user_alias?: unknown;
+  };
+}
+
+/**
+ * Fallback for SSO credentials: /user/info accepts the SSO token and reports
+ * user-level spend and budget (no per-key limits apply).
+ */
+async function fetchUserInfoBudget(
+  baseUrl: string,
+  apiKey: string,
+  timeoutMs: number,
+): Promise<BudgetInfo> {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  let response: Response;
+  try {
+    response = await fetch(`${normalized}/user/info`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw new CatalogError(
+      `Failed to fetch budget info: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    throw new AuthError("Credential rejected by gateway. Run /login again.");
+  }
+
+  if (!response.ok) {
+    throw new CatalogError(
+      `Failed to fetch budget info: ${response.status}: ${response.statusText}`,
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (err) {
+    throw new CatalogError(
+      `Budget info response is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+
+  const record = (typeof body === "object" && body !== null
+    ? body
+    : {}) as UserInfoResponse;
+  const ui = record.user_info ?? {};
+
+  return {
+    spend: asNullableNumber(ui.spend),
+    maxBudget: asNullableNumber(ui.max_budget),
+    tpmLimit: null,
+    rpmLimit: null,
+    budgetResetAt: null,
+    keyAlias:
+      typeof ui.user_alias === "string" && ui.user_alias ? ui.user_alias : null,
   };
 }
 
