@@ -41,8 +41,11 @@ export async function readStoredCredentialGatewayUrl(
 
   try {
     const url = new URL(tokenEndpoint);
-    const origin = `${url.protocol}//${url.host}`;
-    return upgradeHttpToHttps(origin);
+    // The credential preserves the gateway URL exactly as the user defined it
+    // at login (including its scheme). A local gateway such as
+    // http://192.0.2.10 has no TLS, so forcing https here breaks every
+    // runtime call. Scheme adaptation stays only in discovery validation.
+    return `${url.protocol}//${url.host}`;
   } catch {
     return null;
   }
@@ -80,6 +83,10 @@ export function pickGatewayUrl(parts: {
   return null;
 }
 
+/**
+ * Kept for compatibility with the discovery-time scheme adaptation helpers;
+ * the stored-credential URL reader no longer upgrades schemes.
+ */
 export function upgradeHttpToHttps(origin: string): string {
   const url = new URL(origin);
   if (url.protocol.toLowerCase() === "http:") {

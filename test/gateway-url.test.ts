@@ -108,7 +108,7 @@ describe("readStoredCredentialGatewayUrl", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("extracts and upgrades an http token endpoint origin to https", async () => {
+  it("preserves the exact http scheme of the stored token endpoint", async () => {
     const authPath = path.join(tmpDir, "auth.json");
     await mkdir(path.dirname(authPath), { recursive: true });
     await writeFile(
@@ -120,6 +120,29 @@ describe("readStoredCredentialGatewayUrl", () => {
             access: "a",
             refresh: "r",
             tokenEndpoint: "http://gateway.example.com/token",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const url = await readStoredCredentialGatewayUrl(authPath, "actsis-litellm");
+    assert.equal(url, "http://gateway.example.com");
+  });
+
+  it("preserves https for https stored token endpoints", async () => {
+    const authPath = path.join(tmpDir, "auth-https.json");
+    await mkdir(path.dirname(authPath), { recursive: true });
+    await writeFile(
+      authPath,
+      JSON.stringify(
+        {
+          "actsis-litellm": {
+            type: "oauth",
+            access: "a",
+            refresh: "r",
+            tokenEndpoint: "https://gateway.example.com/token",
           },
         },
         null,
