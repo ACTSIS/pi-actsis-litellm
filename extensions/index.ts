@@ -46,8 +46,13 @@ function isOAuthCredential(
 
 async function getBaseUrl(): Promise<string | null> {
   try {
+    const storedUrl = await readStoredCredentialGatewayUrl(
+      defaultAuthPath(),
+      state.providerId ?? "actsis-litellm",
+    );
     const cfg = await resolveConfig({
       env: process.env,
+      storedUrl,
       fileLoader: async (filePath) => {
         try {
           const { readFile } = await import("node:fs/promises");
@@ -101,6 +106,10 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
       return;
     }
 
+    const storedUrl = await readStoredCredentialGatewayUrl(
+      defaultAuthPath(),
+      providerId,
+    );
     const cfg = await resolveConfig({
       env: process.env,
       fileLoader: async (filePath) => {
@@ -112,6 +121,7 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
           return null;
         }
       },
+      storedUrl,
       prompt: async () => undefined,
     });
 
