@@ -106,14 +106,14 @@ function budgetStatusText(info: BudgetInfo): string | undefined {
   return `Budget ${spend} used (no cap)`;
 }
 
-async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
-  if (!ctx.hasUI) return;
+async function refreshBudgetWidget(ctx: WidgetContext): Promise<string | undefined> {
+  if (!ctx.hasUI) return undefined;
 
   try {
     const providerId = state.providerId;
     if (!providerId) {
       ctx.ui.setWidget("actsis-litellm-budget", undefined);
-      return;
+      return "no provider registered";
     }
 
     const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
@@ -126,13 +126,13 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
         : undefined;
     if (!apiKey) {
       ctx.ui.setWidget("actsis-litellm-budget", undefined);
-      return;
+      return "no auth resolution (auth.apiKey missing)";
     }
 
     const baseUrl = await getBaseUrl();
     if (!baseUrl) {
       ctx.ui.setWidget("actsis-litellm-budget", undefined);
-      return;
+      return "gateway URL not resolved";
     }
 
     const storedUrl = await readStoredCredentialGatewayUrl(
@@ -158,12 +158,14 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
     const text = budgetStatusText(info);
     if (text) {
       ctx.ui.setStatus?.(BUDGET_STATUS_KEY, text);
-    } else {
-      ctx.ui.setStatus?.(BUDGET_STATUS_KEY, undefined);
+      return text;
     }
+    ctx.ui.setStatus?.(BUDGET_STATUS_KEY, undefined);
+    return "no spend data (spend null)";
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     ctx.ui.setStatus?.(BUDGET_STATUS_KEY, `Budget unavailable: ${reason}`);
+    return `error: ${reason}`;
   }
 }
 
@@ -227,6 +229,17 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     handler: buildLogoutHandler(commandDeps),
   });
 
+  pi.registerCommand("actsis-litellm:budget", {
+    description: "Force a budget refresh and report the outcome",
+    handler: async (_args: string, ctx: unknown) => {
+      const outcome = await refreshBudgetWidget(ctx as WidgetContext);
+      if (ctx && typeof ctx === "object" && "hasUI" in ctx && (ctx as { hasUI?: boolean }).hasUI) {
+        const ui = (ctx as { ui?: { notify?(message: string, level?: string): void } }).ui;
+        ui?.notify?.(`Budget refresh: ${outcome ?? "ok"}`, "info");
+      }
+    },
+  });
+
   pi.on("message_end", async (event, ctx) => {
     const message = event.message as {
       role: string;
@@ -263,6 +276,10 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     if (ctx.hasUI) {
       ctx.ui.notify("pi-actsis-litellm loaded", "info");
     }
+    await refreshBudgetWidget(ctx as unknown as WidgetContext);
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
     await refreshBudgetWidget(ctx as unknown as WidgetContext);
   });
 
