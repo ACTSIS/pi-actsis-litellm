@@ -91,11 +91,14 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
     }
 
     const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
-    const credential =
-      authResult && typeof authResult === "object" && "credential" in authResult
-        ? (authResult as { credential?: unknown }).credential
+    const apiKey =
+      authResult &&
+      typeof authResult === "object" &&
+      "auth" in authResult &&
+      typeof (authResult as { auth?: { apiKey?: unknown } }).auth?.apiKey === "string"
+        ? ((authResult as { auth: { apiKey: string } }).auth.apiKey as string)
         : undefined;
-    if (!isOAuthCredential(credential)) {
+    if (!apiKey) {
       ctx.ui.setWidget("actsis-litellm-budget", undefined);
       return;
     }
@@ -125,7 +128,7 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<void> {
       prompt: async () => undefined,
     });
 
-    const info = await fetchBudgetInfo(baseUrl, credential.access, cfg.requestTimeoutMs);
+    const info = await fetchBudgetInfo(baseUrl, apiKey, cfg.requestTimeoutMs);
     const line = formatBudgetLine(info);
     if (line) {
       const percent = budgetUsagePercent(info.spend, info.maxBudget);
