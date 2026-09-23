@@ -55,6 +55,7 @@ sequenceDiagram
 2. **Method selector** — The user chooses **SSO (browser)** or **API key**.
 3. **SSO path only:**
    - **Discovery** — The extension fetches `/.well-known/litellm-cli-auth` to learn the OAuth endpoints.
+   - **Scheme adaptation (discovery only)** — If the gateway advertises `http://` endpoints while the configured URL is `https://` on the same host and port, the extension upgrades the announced endpoints to `https://` (never the reverse) and notifies: "Gateway advertises http:// endpoints; using https:// (scheme upgrade applied)." Endpoints on any other origin are rejected. Runtime calls after login always use the gateway URL exactly as the user configured it, including its scheme.
    - **Dynamic client registration** — A public, loopback-only client is registered on demand. No client secret is involved.
    - **PKCE S256** — The extension generates a local `code_verifier`, hashes it into a `code_challenge`, and sends only the challenge to the authorize endpoint.
    - **Browser consent** — The user's browser opens the authorize URL. The gateway authenticates the user and presents a team/role picker.
@@ -63,10 +64,10 @@ sequenceDiagram
 4. **API key path only:**
    - The user enters a LiteLLM API key.
    - The extension validates the key with `GET {gateway}/v1/models`.
-   - On success it stores a synthetic, long-lived OAuth credential (`authMode: api_key`) so pi treats it like any other credential.
+   - On success it stores a synthetic, long-lived OAuth credential (`authMode: api_key`) with a 10-year expiry so pi treats it like any other credential. The credential records `tokenEndpoint: {gateway}/token`, which is how the stored gateway URL is later recovered for runtime configuration.
 5. **Credential storage** — Tokens are passed to pi's native credential store (`~/.pi/agent/auth.json`); the extension does not write credentials to its own files.
-6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials immediately. API key credentials never refresh.
-7. **Logout** — `/actsis-litellm:logout` calls the revoke endpoint with the current `refresh_token` for SSO and clears the pi credential entry. API key mode skips remote revocation because there is no refresh token.
+6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials immediately. The stored access-token expiry is set to `now + max(expires_in - 300, 60)` seconds, so renewal starts before the real expiry. API key credentials never refresh; refreshing one returns an unchanged copy.
+7. **Logout** — `/actsis-litellm:logout` calls the revoke endpoint with the current `refresh_token` for SSO, clears the pi credential entry, and removes the model-catalog cache. API key mode skips remote revocation because there is no refresh token.
 
 ## Security notes
 
@@ -76,4 +77,5 @@ sequenceDiagram
 - **Refresh rotation.** Each successful refresh returns a new refresh token; the old one is discarded and the new one is persisted via pi.
 - **Revoke on logout.** Logout tells the gateway to invalidate the refresh token server-side in addition to clearing local state.
 - **Credential storage delegated to pi.** The extension never writes tokens to its own cache or configuration files; pi's credential store is responsible for file permissions and encryption.
+- **Scheme discipline.** Discovery-time adaptation only upgrades `http` → `https` within the same host when the base URL is already `https`; it never downgrades. Redirect responses on register/token/revoke are never followed, preventing credential leakage to a different origin. After login, runtime calls preserve the stored credential's scheme verbatim (non-TLS LAN gateways keep working on `http://`).
 - **API key validation.** API keys are checked against the gateway before storage, but they are otherwise stored by pi in `~/.pi/agent/auth.json` like any other credential. Treat them as secrets.
