@@ -39,6 +39,53 @@ describe("budget", () => {
   }
 
   describe("fetchBudgetInfo", () => {
+    it("parses the nested { key, info } shape returned by LiteLLM >= 1.100.1", async () => {
+      mockFetch(async () =>
+        new Response(
+          JSON.stringify({
+            key: "<hashed-token>",
+            info: {
+              spend: 3.99,
+              max_budget: 100.0,
+              tpm_limit: 2000000,
+              rpm_limit: 600,
+              budget_reset_at: "2026-10-01T00:00:00+00:00",
+              key_alias: "TESTUSER",
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const info = await fetchBudgetInfo(
+        "https://gateway.example.com",
+        "sk-test",
+        30_000,
+      );
+
+      assert.equal(info.spend, 3.99);
+      assert.equal(info.maxBudget, 100);
+      assert.equal(info.tpmLimit, 2000000);
+      assert.equal(info.rpmLimit, 600);
+      assert.equal(info.budgetResetAt, Date.parse("2026-10-01T00:00:00+00:00"));
+      assert.equal(info.keyAlias, "TESTUSER");
+    });
+
+    it("keeps parsing the legacy flat /key/info shape", async () => {
+      mockFetch(async () =>
+        new Response(JSON.stringify(VALID_BODY), { status: 200 }),
+      );
+
+      const info = await fetchBudgetInfo(
+        "https://gateway.example.com",
+        "sk-test",
+        30_000,
+      );
+
+      assert.equal(info.spend, 128.91);
+      assert.equal(info.maxBudget, 100);
+    });
+
     it("parses a typical /key/info body", async () => {
       mockFetch(async () =>
         new Response(JSON.stringify(VALID_BODY), { status: 200 }),
@@ -111,6 +158,29 @@ describe("budget", () => {
       await assert.rejects(
         fetchBudgetInfo("https://gateway.example.com", "key", 30_000),
         (err) => err instanceof AuthError,
+      );
+    });
+
+    it("reports route-permission 403 without telling the user to re-login", async () => {
+      mockFetch(async () =>
+        new Response(
+          JSON.stringify({
+            detail:
+              "Virtual key is not allowed to call this route. Key team does not have group route permissions: /key/info",
+          }),
+          { status: 403 },
+        ),
+      );
+
+      await assert.rejects(
+        fetchBudgetInfo("https://gateway.example.com", "key", 30_000),
+        (err) => {
+          assert.ok(err instanceof AuthError);
+          const message = (err as AuthError).message;
+          assert.ok(message.includes("info_routes"), message);
+          assert.ok(!message.includes("Run /login again"), message);
+          return true;
+        },
       );
     });
 

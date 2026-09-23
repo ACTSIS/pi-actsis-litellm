@@ -10,6 +10,7 @@ export interface BudgetInfo {
 }
 
 interface KeyInfoResponse {
+  info?: unknown;
   spend?: number;
   max_budget?: number;
   tpm_limit?: number;
@@ -55,6 +56,27 @@ export async function fetchBudgetInfo(
   }
 }
 
+/**
+ * Maps a 401/403 budget response to the most accurate error: a virtual key
+ * without the `info_routes` permission gets a 403 with a LiteLLM `detail`
+ * message that re-login cannot fix, so it must not read as "run /login".
+ */
+async function authErrorFor(response: Response): Promise<AuthError> {
+  let detail = "";
+  try {
+    const body = (await response.json()) as { detail?: unknown };
+    if (typeof body.detail === "string" && body.detail) detail = body.detail;
+  } catch {
+    // Body is not JSON or unreadable; fall back to the generic message.
+  }
+  if (response.status === 403 && detail) {
+    return new AuthError(
+      `Gateway denied access to budget info (403): ${detail}. Ask a gateway admin to grant the key the info_routes permission.`,
+    );
+  }
+  return new AuthError("Credential rejected by gateway. Run /login again.");
+}
+
 async function fetchKeyInfoBudget(
   baseUrl: string,
   apiKey: string,
@@ -75,7 +97,7 @@ async function fetchKeyInfoBudget(
   }
 
   if (response.status === 401 || response.status === 403) {
-    throw new AuthError("Credential rejected by gateway. Run /login again.");
+    throw await authErrorFor(response);
   }
 
   if (!response.ok) {
@@ -94,9 +116,18 @@ async function fetchKeyInfoBudget(
     );
   }
 
-  const record = (typeof body === "object" && body !== null
-    ? body
-    : {}) as KeyInfoResponse;
+  const bodyRecord = typeof body === "object" && body !== null
+    ? (body as Record<string, unknown>)
+    : {};
+  // LiteLLM >= 1.100.1 nests the key record under `info`
+  // (GET /key/info -> { key: string, info: <VerificationToken> }); older
+  // versions returned the fields at the top level. Flatten defensively so
+  // both shapes parse, with `info` winning when present.
+  const infoRecord =
+    typeof bodyRecord.info === "object" && bodyRecord.info !== null
+      ? (bodyRecord.info as Record<string, unknown>)
+      : {};
+  const record = { ...bodyRecord, ...infoRecord } as KeyInfoResponse;
 
   return {
     spend: asNullableNumber(record.spend),
@@ -143,7 +174,7 @@ async function fetchUserInfoBudget(
   }
 
   if (response.status === 401 || response.status === 403) {
-    throw new AuthError("Credential rejected by gateway. Run /login again.");
+    throw await authErrorFor(response);
   }
 
   if (!response.ok) {
