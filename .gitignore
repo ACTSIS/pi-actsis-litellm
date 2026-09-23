@@ -11,7 +11,7 @@ node_modules/
 .atl/
 
 # Internal planning artifacts
-odd/
+# (user decision 2026-09-23: odd/ feature docs are tracked in the repository)
 
 # Local gateway config (contains real URL, never commit)
 .pi/actsis-litellm.user.json
