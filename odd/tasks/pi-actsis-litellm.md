@@ -19,7 +19,8 @@ Approved decisions (user, 2026-09-22):
 
 ## Research summary
 
-- Server: LiteLLM Proxy (self-hosted). No internal hostnames anywhere.
+- Server: LiteLLM Proxy (self-hosted). No internal hostnames, addresses, or
+  deployment fingerprints in code or docs.
 - Native CLI auth contract: `GET /.well-known/litellm-cli-auth` (contract_version 1):
   authorize/token/register/revoke; PKCE S256; public client; loopback-only redirect;
   RFC 8707 `resource` param required; code single-use; refresh token rotates on every
@@ -59,6 +60,13 @@ Approved decisions (user, 2026-09-22):
       (status:approved) + PR #3 (type:docs), MERGED rebase to main @ 8a3f484.
       Evidence: branch docs/sync-technical-functional-user-docs, commit 85c29f4
       (+66/−15 over 3 files), leak-check clean, 182/182 tests.
+
+- [x] T15. Sanitize internal references from tracked files (2026-09-24).
+      LAN address in `extensions/lib/gateway-url.ts` comment, internal gateway
+      hostname in `test/gateway-url.test.ts`, and server version/endpoint-count
+      fingerprint in this file replaced with public placeholders. Branch
+      fix/remove-internal-references. HEAD is clean; the strings remain reachable
+      in prior commits until the history rewrite / repo recreation follow-up.
 
 - [x] T14. Propagate the real cause of network failures into user-facing errors.
       Context: a real login failure surfaced as "Failed to fetch CLI auth discovery:
@@ -107,16 +115,21 @@ Approved decisions (user, 2026-09-22):
 
 ## Evidence log
 
+- 2026-09-24: T15 internal-reference sanitation. A full-history audit found
+  internal references in tracked files: a LAN address in a `gateway-url.ts`
+  comment, an internal gateway hostname in `gateway-url.test.ts`, and a server
+  version/endpoint-count fingerprint in this file. All replaced with public
+  placeholders (`192.0.2.10` RFC 5737, `gateway.example.com`). No credentials,
+  tokens, or keys were ever committed (verified across all commits). Note: the
+  working tree is clean, but these strings remain reachable in prior commits;
+  history rewrite + repository recreation is tracked as separate follow-up.
+
 - 2026-09-24: T14 network error cause reporting implemented
   (fix/network-error-cause-reporting; 6799c3a, d9db3a9, 7debc55). Suite grew
   +21 tests (all passing). Baseline delta proof via a detached main worktree:
   with an isolated HOME, pristine main 182/180 pass/2 fail vs branch 203/201
   pass/2 fail - identical failure set, zero new failures; `tsc --noEmit` exit 0;
   leak-check clean on changed files. Triggered by a real production login failure.
-  Pre-existing leak found in main (NOT introduced here, still open):
-  `extensions/lib/gateway-url.ts:46` contains an internal LAN IP and
-  `test/gateway-url.test.ts:145,154` contain the internal gateway hostname, in a
-  declared-PUBLIC repo.
 
 - 2026-09-22: T1-T11 built and published; repo default branch set to main @ b5be29e;
   163/163 tests; RDD review rounds 1-2 approved (lineages review-4d8f8e4c236f1197,
