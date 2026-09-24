@@ -1,4 +1,5 @@
 import { AuthError, CatalogError } from "./errors.ts";
+import { fetchFailureMessage } from "./network-error.ts";
 
 export interface BudgetInfo {
   spend: number | null;
@@ -91,7 +92,7 @@ async function fetchKeyInfoBudget(
     });
   } catch (err) {
     throw new CatalogError(
-      `Failed to fetch budget info: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to fetch budget info: ${fetchFailureMessage(err)}`,
       { cause: err },
     );
   }
@@ -168,7 +169,7 @@ async function fetchUserInfoBudget(
     });
   } catch (err) {
     throw new CatalogError(
-      `Failed to fetch budget info: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to fetch budget info: ${fetchFailureMessage(err)}`,
       { cause: err },
     );
   }

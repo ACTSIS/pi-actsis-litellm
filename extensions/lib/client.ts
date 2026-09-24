@@ -1,4 +1,5 @@
-import { DiscoveryError, AuthError, CatalogError } from "./errors.ts";
+import { DiscoveryError, AuthError, CatalogError, ActsisLiteLLMError } from "./errors.ts";
+import { fetchFailureMessage } from "./network-error.ts";
 
 export interface CliAuthDiscovery {
   contractVersion: number;
@@ -222,6 +223,25 @@ function discoveryUrl(baseUrl: string): string {
   return `${normalized}/.well-known/litellm-cli-auth`;
 }
 
+/**
+ * Wraps a bare fetch so a network-level failure (opaque `TypeError: fetch
+ * failed`) is reported with its underlying cause instead of escaping as an
+ * anonymous TypeError. Diagnostics only: the URL and init object are passed
+ * through untouched and response handling is left to the caller.
+ */
+async function fetchOrThrow(
+  url: string,
+  init: RequestInit,
+  makeError: (message: string, cause: unknown) => ActsisLiteLLMError,
+  label: string,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    throw makeError(`${label}: ${fetchFailureMessage(err)}`, err);
+  }
+}
+
 export async function fetchCliAuthDiscovery(
   baseUrl: string,
   timeoutMs: number,
@@ -234,7 +254,7 @@ export async function fetchCliAuthDiscovery(
     });
   } catch (err) {
     throw new DiscoveryError(
-      `Failed to fetch CLI auth discovery: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to fetch CLI auth discovery: ${fetchFailureMessage(err)}`,
       { cause: err },
     );
   }
@@ -282,19 +302,24 @@ export async function registerClient(
   redirectUri: string,
   timeoutMs: number,
 ): Promise<RegisteredClient> {
-  const response = await fetch(discovery.registrationEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_name: "pi-actsis-litellm",
-      redirect_uris: [redirectUri],
-      token_endpoint_auth_method: "none",
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-    }),
-    redirect: "manual",
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const response = await fetchOrThrow(
+    discovery.registrationEndpoint,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_name: "pi-actsis-litellm",
+        redirect_uris: [redirectUri],
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+      }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+    (message, cause) => new AuthError(message, { cause }),
+    "Client registration request failed",
+  );
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get("Location") ?? "unknown";
@@ -372,13 +397,18 @@ export async function exchangeAuthorizationCode(
   params.set("code_verifier", input.codeVerifier);
   params.set("resource", discovery.resource);
 
-  const response = await fetch(discovery.tokenEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-    redirect: "manual",
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const response = await fetchOrThrow(
+    discovery.tokenEndpoint,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+    (message, cause) => new AuthError(message, { cause }),
+    "Authorization code exchange request failed",
+  );
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get("Location") ?? "unknown";
@@ -447,13 +477,18 @@ export async function refreshGrant(
   params.set("client_id", input.clientId);
   params.set("resource", discovery.resource);
 
-  const response = await fetch(discovery.tokenEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-    redirect: "manual",
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const response = await fetchOrThrow(
+    discovery.tokenEndpoint,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+    (message, cause) => new AuthError(message, { cause }),
+    "Token refresh request failed",
+  );
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get("Location") ?? "unknown";
@@ -528,13 +563,18 @@ export async function revokeToken(
   params.set("token", input.token);
   params.set("client_id", input.clientId);
 
-  const response = await fetch(discovery.revocationEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-    redirect: "manual",
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const response = await fetchOrThrow(
+    discovery.revocationEndpoint,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+    (message, cause) => new AuthError(message, { cause }),
+    "Token revocation request failed",
+  );
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get("Location") ?? "unknown";
@@ -569,12 +609,17 @@ export async function fetchModels(
   timeoutMs: number,
 ): Promise<ModelsResponse> {
   const normalized = baseUrl.replace(/\/+$/, "");
-  const response = await fetch(`${normalized}/v1/models?include_metadata=true`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
+  const response = await fetchOrThrow(
+    `${normalized}/v1/models?include_metadata=true`,
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
     },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+    (message, cause) => new CatalogError(message, { cause }),
+    "Failed to fetch models",
+  );
 
   if (response.status === 401 || response.status === 403) {
     throw new AuthError(
@@ -607,12 +652,17 @@ export async function fetchModelInfo(
   timeoutMs: number,
 ): Promise<ModelsResponse> {
   const normalized = baseUrl.replace(/\/+$/, "");
-  const response = await fetch(`${normalized}/model/info`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
+  const response = await fetchOrThrow(
+    `${normalized}/model/info`,
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
     },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+    (message, cause) => new CatalogError(message, { cause }),
+    "Failed to fetch model info",
+  );
 
   if (response.status === 401 || response.status === 403) {
     throw new AuthError(
@@ -650,12 +700,17 @@ export async function fetchModelInfoV2(
   const params = new URLSearchParams();
   params.set("size", String(size));
   params.set("page", String(page));
-  const response = await fetch(`${normalized}/v2/model/info?${params.toString()}`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
+  const response = await fetchOrThrow(
+    `${normalized}/v2/model/info?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
     },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+    (message, cause) => new CatalogError(message, { cause }),
+    `Failed to fetch model info (v2 page ${page})`,
+  );
 
   if (response.status === 401 || response.status === 403) {
     throw new AuthError(

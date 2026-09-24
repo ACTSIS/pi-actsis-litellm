@@ -139,6 +139,29 @@ Context-window overflow errors from the gateway are normalized to `context_lengt
 | `Budget exceeded: $X of $Y used` | The key's budget cap was hit. Top up the key budget in the gateway UI or wait for the budget reset. |
 | `Rate limit reached ... pi will retry automatically` | LiteLLM throttling (TPM/RPM). No action needed; pi retries with backoff until the limit window resets. |
 | Context overflow / auto-compaction | Gateway context-window errors are surfaced as `context_length_exceeded` and pi compacts the session automatically. If the error keeps repeating, start a fresh session or pick a larger-context model. |
+| `Failed to login ... fetch failed` (with the underlying cause now named) | Network failures report their real cause (DNS, connection refused, TLS trust, timeout, reset). For a TLS code against an internal-CA gateway (`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, `SELF_SIGNED_CERT_IN_CHAIN`, ...): install the issuing CA in the OS trust store and start Node with `--use-system-ca`, or point `NODE_EXTRA_CA_CERTS` at the CA bundle. See below. |
+
+### TLS with an internal certificate authority
+
+If the login error names a TLS code such as `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, Node does not trust the gateway's certificate chain. Fix it by trusting the issuing CA, not by disabling TLS verification:
+
+```bash
+# Prefer the OS trust store (Node >= 22). Set it for pi itself:
+export NODE_OPTIONS=--use-system-ca
+# Or point Node at the CA bundle:
+export NODE_EXTRA_CA_CERTS=/path/to/corporate-ca-bundle.pem
+```
+
+On Windows (PowerShell), persist it for your user and then restart pi:
+
+```powershell
+[Environment]::SetEnvironmentVariable('NODE_OPTIONS','--use-system-ca','User')
+```
+
+A CA root alone may not be enough if the gateway does not send its intermediate
+certificate: OpenSSL does not fetch intermediates the way Windows does, so
+`NODE_EXTRA_CA_CERTS` pointing at the root can still fail while `--use-system-ca`
+succeeds. Restart pi after changing either variable.
 
 ## Security notes
 

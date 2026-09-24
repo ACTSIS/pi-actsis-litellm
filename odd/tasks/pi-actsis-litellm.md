@@ -60,7 +60,63 @@ Approved decisions (user, 2026-09-22):
       Evidence: branch docs/sync-technical-functional-user-docs, commit 85c29f4
       (+66/−15 over 3 files), leak-check clean, 182/182 tests.
 
+- [x] T14. Propagate the real cause of network failures into user-facing errors.
+      Context: a real login failure surfaced as "Failed to fetch CLI auth discovery:
+      fetch failed". undici wraps the root cause in `err.cause` (which the code
+      discarded), hiding `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` behind an opaque
+      TypeError. Diagnosing it required reproducing the fetch outside the extension.
+      Branch fix/network-error-cause-reporting; commits 6799c3a (code+tests),
+      d9db3a9 + 7debc55 (docs).
+  - [x] T14.1 `extensions/lib/network-error.ts`: `fetchFailureMessage(err)` walks the
+        cause chain (capped at 5, cycle-safe), surfaces the underlying code + message,
+        and appends one actionable hint (TLS trust, DNS, refused, timeout, reset).
+  - [x] T14.2 Wired into all 8 fetch sites in `extensions/lib/client.ts` via a single
+        `fetchOrThrow` helper (URL/init/response handling unchanged).
+  - [x] T14.3 Wired into both fetch sites in `extensions/lib/budget.ts`; the
+        `/key/info` -> `/user/info` fallback ordering and AuthError rethrow untouched.
+  - [x] T14.4 `test/network-error.test.ts` (21 tests): cause-chain extraction, every
+        hint class, cycle/depth safety, verbatim preservation for no-cause errors,
+        abort-vs-timeout, and integration class assertions.
+  - [x] T14.5 Docs: README troubleshooting row + internal-CA section, CHANGELOG note.
+
+  Scope: diagnostics only. No retry logic, no transport change, no new dependency.
+  Acceptance: a TLS-trust failure names the code and points at the trust-store fix;
+  a generic thrown Error keeps its original message.
+
+  Key design constraint: catalog network failures map to `CatalogError`, NEVER
+  `AuthError`, because `provider.ts` `validateApiKey()` treats any AuthError as
+  "API key rejected by gateway" - the wrong class would misreport a connectivity
+  problem as a bad key. Asserted by a dedicated test.
+
+  Verified end-to-end against the REAL un-trusted gateway failure (not a mock):
+  before -> `fetch failed`; after -> `fetch failed
+  (UNABLE_TO_GET_ISSUER_CERT_LOCALLY: unable to get local issuer certificate)
+  the gateway's TLS certificate is not trusted by Node; install the issuing CA ...
+  start Node with --use-system-ca`; class and top-level message preserved.
+
+  NOTE (test-runner + isolation debt found while verifying, NOT fixed here):
+  - `npm test` is broken on Node 25: `node --test test/` no longer resolves a
+    directory (`Cannot find module ...\test`). Use bare `node --test` (or a glob).
+  - `provider.test.ts` / `catalog.test.ts` set `process.env.HOME` to a temp dir,
+    but `os.homedir()` ignores `HOME` on Windows (it reads `USERPROFILE`), so the
+    developer's real `~/.pi/agent/auth.json` leaks in and changes the pass/fail
+    set. Failure set therefore depends on the machine's real credential state.
+  - Two pre-existing failures unrelated to T14: `catalog.test.ts:809` and
+    `catalog.test.ts:864` ("refreshModels degrades gracefully when cache save
+    fails" / "when publish rejects"). Same set on pristine main.
+
 ## Evidence log
+
+- 2026-09-24: T14 network error cause reporting implemented
+  (fix/network-error-cause-reporting; 6799c3a, d9db3a9, 7debc55). Suite grew
+  +21 tests (all passing). Baseline delta proof via a detached main worktree:
+  with an isolated HOME, pristine main 182/180 pass/2 fail vs branch 203/201
+  pass/2 fail - identical failure set, zero new failures; `tsc --noEmit` exit 0;
+  leak-check clean on changed files. Triggered by a real production login failure.
+  Pre-existing leak found in main (NOT introduced here, still open):
+  `extensions/lib/gateway-url.ts:46` contains an internal LAN IP and
+  `test/gateway-url.test.ts:145,154` contain the internal gateway hostname, in a
+  declared-PUBLIC repo.
 
 - 2026-09-22: T1-T11 built and published; repo default branch set to main @ b5be29e;
   163/163 tests; RDD review rounds 1-2 approved (lineages review-4d8f8e4c236f1197,
