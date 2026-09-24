@@ -153,3 +153,11 @@ For a detailed sequence diagram and security rationale, see [`docs/login-flow.md
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+---
+
+<p align="center">
+  <a href="https://github.com/Gentleman-Programming/gentle-ai">
+    <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+  </a>
+</p>
