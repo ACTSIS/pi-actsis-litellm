@@ -180,6 +180,12 @@ each agent turn, after a rewritten budget error, and manual
 `/actsis-litellm:budget`) with a 5-minute TTL. Any failure clears the rows
 silently; when there is no usage in the window the block is hidden.
 
+**Toggle it at will with `/actsis-litellm:top`:** no args toggle it, `on`/`off`
+are explicit. The choice persists across sessions in the extension-owned
+`~/.pi/agent/actsis-litellm-prefs.json` (`"topModelsWidget"`; default on). `off`
+clears the rows immediately and the extension stops querying the gateway for
+the widget; `on` re-renders it right away.
+
 ## Gateway error normalization
 
 When a request fails, LiteLLM budget and rate-limit errors are rewritten into actionable messages:

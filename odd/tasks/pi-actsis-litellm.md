@@ -166,6 +166,13 @@ Approved decisions (user, 2026-09-22):
       right-aligned spend, right-aligned share %, aligned gauge column; entry
       keys re-keyed (top / top0 separator / top1..5) to keep title-sep-rows
       order, legacy keys cleared.
+- [x] T28. NBSP padding in the top-5 status rows so Gentle Shell's
+      sanitizeStatus (collapses " +/g) cannot destroy column alignment;
+      contract tests pin the real sanitize behavior.
+- [x] T29. /actsis-litellm:top toggle command (no args = toggle; on/off
+      explicit) persisted in extension-owned prefs file
+      ~/.pi/agent/actsis-litellm-prefs.json ("topModelsWidget", default on);
+      off clears rows and skips refreshes; on refreshes immediately.
 ## Evidence log
 
 - 2026-10-09 (T27 delivery): Issue #17 + PR #18 (type:bug) merged rebase

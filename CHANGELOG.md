@@ -20,6 +20,12 @@
   `ACTSIS_LITELLM_NO_SYSTEM_CA=1`. TLS trust errors now carry concrete Windows
   and Linux remediation steps (`setx NODE_USE_SYSTEM_CA 1`, `certutil -encode`,
   `NODE_EXTRA_CA_CERTS`).
+- **Top-5 widget toggle + hard alignment** — `/actsis-litellm:top` (toggle /
+  `on` / `off`) turns the widget on/off at will, persisted in the
+  extension-owned `~/.pi/agent/actsis-litellm-prefs.json` (default on);
+  `off` clears the rows and stops the gateway queries. Column padding now uses
+  non-breaking spaces so Gentle Shell's status-line sanitizer (which collapses
+  ASCII space runs) cannot destroy the tabular alignment of the widget.
 - **Dashboard-parity usage numbers** — `/usage` and the top-5 widget now query the
   aggregated `/user/daily/activity/aggregated` endpoint (stable query-scoped totals) with
   a `user_id` filter from the stored credential, so an admin token reports "Your Usage"

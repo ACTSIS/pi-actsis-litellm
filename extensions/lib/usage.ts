@@ -689,6 +689,15 @@ export function formatUsageLines(summary: ModelUsageSummary): string[] {
 export const TOP_MODELS_STATUS_KEY_PREFIX = "actsis-litellm:budget:top";
 
 /**
+ * Converts runs of 2+ ASCII spaces into NBSP runs: Gentle Shell's
+ * sanitizeStatus collapses ASCII space runs but preserves NBSP (verified),
+ * so column padding survives into the Status panel with identical width.
+ */
+function nbspRuns(text: string): string {
+  return text.replace(/ {2,}/g, (run) => "\u00a0".repeat(run.length));
+}
+
+/**
  * Budget-style 8-cell gauge over a [0,100] percentage; same glyphs the
  * extension's budget status line renders (▰ filled / ▱ empty).
  */
@@ -749,8 +758,8 @@ export function buildTopModelsStatusEntries(options: {
     const row = rows[i];
     const spendValue = row.spend ?? 0;
     const share = windowTotal > 0 ? Math.min(100, Math.max(0, (spendValue / windowTotal) * 100)) : 0;
-    const text = `${row.model.padEnd(nameWidth)} ${`$${spendValue.toFixed(2)}`.padStart(spendWidth)} ${String(Math.round(share)).padStart(pctWidth)}% ${usageGauge(share)}`;
-    entries.push({ key: `${prefix}${i + 1}`, text });
+    const raw = `${row.model.padEnd(nameWidth)} ${`$${spendValue.toFixed(2)}`.padStart(spendWidth)} ${String(Math.round(share)).padStart(pctWidth)}% ${usageGauge(share)}`;
+    entries.push({ key: `${prefix}${i + 1}`, text: nbspRuns(raw) });
   }
   return entries;
 }
