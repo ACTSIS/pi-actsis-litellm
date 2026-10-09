@@ -204,6 +204,58 @@ describe("fetchModelUsage", () => {
     }
   });
 
+  it("uses metadata totals when results are empty", async () => {
+    const recorder = mockFetch(() =>
+      jsonResponse({
+        results: [],
+        metadata: {
+          total_spend: 0.5,
+          total_prompt_tokens: 100,
+          total_completion_tokens: 200,
+          total_tokens: 300,
+          total_api_requests: 5,
+        },
+      }),
+    );
+    try {
+      const summary = await fetchModelUsage("http://gw:4000", "sk-x", 5_000, RANGE);
+      assert.deepEqual(summary.totals, {
+        spend: 0.5,
+        promptTokens: 100,
+        completionTokens: 200,
+        totalTokens: 300,
+        apiRequests: 5,
+      });
+    } finally {
+      recorder.restore();
+    }
+  });
+
+  it("falls back to row sums per missing metadata key", async () => {
+    const body = dailyActivityBody() as {
+      results: unknown[];
+      metadata: Record<string, number>;
+    };
+    // Metadata carries only spend; the rest must fall back to row sums.
+    body.metadata = { total_spend: 0.031 };
+    const recorder = mockFetch(() => jsonResponse(body));
+    try {
+      const summary = await fetchModelUsage(
+        "http://gw.example:4000",
+        "sk-test",
+        5_000,
+        RANGE,
+      );
+      assert.equal(summary.totals.spend, 0.031);
+      assert.equal(summary.totals.apiRequests, 7);
+      assert.equal(summary.totals.totalTokens, 700);
+      assert.equal(summary.totals.promptTokens, 250);
+      assert.equal(summary.totals.completionTokens, 450);
+    } finally {
+      recorder.restore();
+    }
+  });
+
   it("maps 401 to AuthError without retry", async () => {
     const recorder = mockFetch(() =>
       jsonResponse({ detail: "Invalid API key" }, 401),
