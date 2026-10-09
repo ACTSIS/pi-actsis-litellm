@@ -24,10 +24,11 @@ import {
 import { fetchBudgetInfo, type BudgetInfo } from "./lib/budget.ts";
 import {
   applyModelAliases,
-  buildTopModelsBlock,
+  buildTopModelsStatusEntries,
   fetchModelUsage,
   mapModelAliases,
   resolveUsageRangeDays,
+  TOP_MODELS_STATUS_KEY_PREFIX,
 } from "./lib/usage.ts";
 import { configureSystemCa } from "./lib/tls-config.ts";
 
@@ -96,13 +97,16 @@ interface WidgetContext {
 // re-implemented locally so this extension renders the same visual language
 // without importing or depending on gentle-pi being installed.
 const BUDGET_STATUS_KEY = "actsis-litellm:budget";
-const TOP_MODELS_WIDGET_KEY = "actsis-litellm:top-models";
+// Legacy belowEditor block from the first version of the top-models widget;
+// cleared on every refresh so the stale footer block disappears after update.
+const TOP_MODELS_LEGACY_WIDGET_KEY = "actsis-litellm:top-models";
 const TOP_MODELS_TTL_MS = 5 * 60 * 1000;
 const TOP_MODELS_WINDOW_DAYS = 7;
+const TOP_MODELS_MAX_ROWS = 5;
 
 interface TopModelsCache {
   fetchedAtMs: number;
-  block: string[];
+  keys: string[];
 }
 let topModelsCache: TopModelsCache | null = null;
 const GAUGE_CELLS = 8;
@@ -204,13 +208,28 @@ async function refreshTopModelsWidget(
     return; // cached block still fresh
   }
 
-  const render = (block: string[], fetchedAtMs: number): void => {
-    topModelsCache = { fetchedAtMs, block };
-    ctx.ui.setWidget(TOP_MODELS_WIDGET_KEY, block, { placement: "belowEditor" });
+  const render = (entries: Array<{ key: string; text: string }>, fetchedAtMs: number): void => {
+    topModelsCache = { fetchedAtMs, keys: entries.map((e) => e.key) };
+    for (const entry of entries) {
+      ctx.ui.setStatus?.(entry.key, entry.text);
+    }
   };
   const clear = (): void => {
+    // Remove every entry the last render may have created, plus the legacy
+    // belowEditor block from the previous widget version.
+    const staleKeys = [
+      TOP_MODELS_LEGACY_WIDGET_KEY,
+      ...(topModelsCache?.keys ?? []),
+      ...Array.from(
+        { length: TOP_MODELS_MAX_ROWS + 1 },
+        (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}-${i}`,
+      ).filter((k) => k !== `${TOP_MODELS_STATUS_KEY_PREFIX}-0`),
+    ];
+    for (const key of new Set(staleKeys)) {
+      ctx.ui.setStatus?.(key, undefined);
+    }
+    ctx.ui.setWidget(TOP_MODELS_LEGACY_WIDGET_KEY, undefined, { placement: "belowEditor" });
     topModelsCache = null;
-    ctx.ui.setWidget(TOP_MODELS_WIDGET_KEY, undefined, { placement: "belowEditor" });
   };
 
   try {
@@ -278,9 +297,10 @@ async function refreshTopModelsWidget(
     );
 
     render(
-      buildTopModelsBlock({
+      buildTopModelsStatusEntries({
         windowLabel: "7d",
         rows: display.models.map((m) => ({ model: m.model, spend: m.spend })),
+        totalSpend: display.totals.spend,
       }),
       nowMs,
     );
