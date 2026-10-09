@@ -7,9 +7,11 @@ import type { OAuthCredential } from "@earendil-works/pi-ai/compat";
 import { resolveConfig, type ActsisEnabledConfig } from "./config.ts";
 import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
 import {
+  applyModelAliases,
   fetchModelUsage,
   formatUsageLines,
   isoDay,
+  mapModelAliases,
   resolveDefaultUsageRange,
   type UsageRange,
 } from "./usage.ts";
@@ -457,9 +459,22 @@ export function buildUsageHandler(deps: CommandDeps) {
         deps.requestTimeoutMs,
         parsed.range,
       );
+      // Present public model names (what the user sees in /model and the
+      // gateway UI) instead of LiteLLM's internal deployment names from the
+      // spend logs. Keys that match no public id (non-chat models absent
+      // from the chat catalog) stay as-is.
+      const publicIds = providerModels(ctx.modelRegistry.getAll(), providerId)
+        .map((m) => m.id);
+      const display = applyModelAliases(
+        summary,
+        mapModelAliases(
+          summary.models.map((m) => m.model),
+          publicIds,
+        ),
+      );
       notify(
         ctx,
-        `Usage (${parsed.label}):\n${formatUsageLines(summary).join("\n")}`,
+        `Usage (${parsed.label}):\n${formatUsageLines(display).join("\n")}`,
         "info",
       );
     } catch (err) {
