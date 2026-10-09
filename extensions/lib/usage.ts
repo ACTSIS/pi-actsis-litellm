@@ -93,9 +93,20 @@ async function requestDailyActivity(
   apiKey: string,
   timeoutMs: number,
   range: UsageRange,
-): Promise<Response> {
+  filters: { userId?: string; aggregated: boolean; page?: number; pageSize?: number },
+): Promise<{ ok: boolean; status: number; found: boolean; body?: unknown }> {
   const normalized = baseUrl.replace(/\/+$/, "");
-  const url = `${normalized}/user/daily/activity?start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`;
+  const path = filters.aggregated
+    ? `${normalized}/user/daily/activity/aggregated`
+    : `${normalized}/user/daily/activity`;
+  const params = new URLSearchParams({
+    start_date: range.startDate,
+    end_date: range.endDate,
+  });
+  if (filters.userId) params.set("user_id", filters.userId);
+  if (filters.page !== undefined) params.set("page", String(filters.page));
+  if (filters.pageSize !== undefined) params.set("page_size", String(filters.pageSize));
+  const url = `${path}?${params.toString()}`;
   let response: Response;
   try {
     response = await fetch(url, {
@@ -107,6 +118,10 @@ async function requestDailyActivity(
       `Failed to fetch model usage: ${err instanceof Error ? err.message : String(err)}`,
       { cause: err },
     );
+  }
+  if (response.status === 404 || response.status === 405) {
+    // Endpoint not offered by this proxy build; the caller falls back.
+    return { ok: false, status: response.status, found: false };
   }
   if (response.status === 401) {
     throw new AuthError("Credential rejected by gateway. Run /login again.");
@@ -121,7 +136,7 @@ async function requestDailyActivity(
       `Failed to fetch model usage: ${response.status}: ${response.statusText}`,
     );
   }
-  return response;
+  return { ok: true, status: response.status, found: true, body: await response.json() };
 }
 
 function readMetrics(record: Record<string, unknown>): MetricsLike {
@@ -190,77 +205,201 @@ function toSummary(
  * `/v1/chat/completions` traffic; `/v1/messages`, passthrough, and unlogged
  * requests report zero or are absent.
  */
+const MAX_USAGE_PAGES = 50;
+const USAGE_PAGE_SIZE = 200;
+
+interface UsagePage {
+  results: Record<string, unknown>[];
+  metadata: Record<string, unknown>;
+  hasMore: boolean;
+  totalPages: number | null;
+}
+
+function parseUsagePage(body: unknown): UsagePage {
+  const record = asRecord(body);
+  const metadata = asRecord(record.metadata);
+  return {
+    results: Array.isArray(record.results) ? record.results.map(asRecord) : [],
+    metadata,
+    hasMore: metadata.has_more === true,
+    totalPages:
+      asNullableNumber(metadata.total_pages) === null
+        ? null
+        : (asNullableNumber(metadata.total_pages) as number),
+  };
+}
+
+/**
+ * Fetches per-model usage, mirroring the LiteLLM dashboard's "Your Usage"
+ * view:
+ *
+ * 1. Primary: `GET /user/daily/activity/aggregated` — stable, query-scoped
+ *    totals in one call (the paginated endpoint's per-page metadata is
+ *    page-scoped and its totals are unreliable — LiteLLM issue #30164).
+ * 2. Fallback (older proxies): the paginated `GET /user/daily/activity`,
+ *    walking every page (page_size 200) and summing rows client-side; the
+ *    per-page metadata is adopted only when the response fits a single page.
+ *
+ * `userId` scopes the query to the credential's own user ("Your Usage");
+ * without it an admin token sees the whole organization.
+ *
+ * NOTE: request counts here come from spend logs and count each upstream
+ * attempt separately; use fetchGatewayRequests for the gateway's answered
+ * requests (the dashboard's Total Requests card).
+ */
 export async function fetchModelUsage(
   baseUrl: string,
   apiKey: string,
   timeoutMs: number,
   range?: Partial<UsageRange>,
+  options: { userId?: string } = {},
 ): Promise<ModelUsageSummary> {
   const effectiveRange: UsageRange = {
     startDate: range?.startDate ?? resolveDefaultUsageRange().startDate,
     endDate: range?.endDate ?? resolveDefaultUsageRange().endDate,
   };
-  const response = await requestDailyActivity(
-    baseUrl,
-    apiKey,
-    timeoutMs,
-    effectiveRange,
-  );
 
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch (err) {
-    throw new CatalogError(
-      `Model usage response is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err },
-    );
+  // Aggregated first (when the proxy offers it).
+  const aggregated = await requestDailyActivity(baseUrl, apiKey, timeoutMs, effectiveRange, {
+    userId: options.userId,
+    aggregated: true,
+  });
+  if (aggregated.found && aggregated.body !== undefined) {
+    return summarizeUsage(effectiveRange, [parseUsagePage(aggregated.body)], {
+      adoptMetadataTotals: true,
+    });
   }
 
-  const record = asRecord(body);
-  const results = Array.isArray(record.results) ? record.results : [];
+  // Paginated walk of the classic endpoint.
+  const pages: UsagePage[] = [];
+  for (let page = 1; page <= MAX_USAGE_PAGES; page++) {
+    const result = await requestDailyActivity(baseUrl, apiKey, timeoutMs, effectiveRange, {
+      userId: options.userId,
+      aggregated: false,
+      page,
+      pageSize: USAGE_PAGE_SIZE,
+    });
+    if (result.found && result.body !== undefined) {
+      const parsed = parseUsagePage(result.body);
+      pages.push(parsed);
+      if (!parsed.hasMore) break;
+    } else {
+      break; // endpoint unavailable (404/405)
+    }
+  }
+  if (pages.length === 0) {
+    throw new CatalogError("Failed to fetch model usage: no usage endpoint available");
+  }
+  const singlePage = pages.length === 1 && pages[0].totalPages !== null && pages[0].totalPages <= 1;
+  return summarizeUsage(effectiveRange, pages, {
+    adoptMetadataTotals: singlePage,
+  });
+}
+
+function summarizeUsage(
+  range: UsageRange,
+  pages: UsagePage[],
+  opts: { adoptMetadataTotals: boolean },
+): ModelUsageSummary {
   const totalsAgg = newAggregator();
   const perModel = new Map<string, MetricsAggregator>();
-  const metadata = asRecord(record.metadata);
 
-  for (const rawRow of results) {
-    const row = asRecord(rawRow);
-
-    accumulate(totalsAgg, readMetrics(row));
-
-    const breakdown = asRecord(row.breakdown);
-    const models = asRecord(breakdown.models);
-    for (const [model, rawMetrics] of Object.entries(models)) {
-      const agg = perModel.get(model) ?? newAggregator();
-      accumulate(agg, readMetrics(asRecord(rawMetrics)));
-      perModel.set(model, agg);
+  for (const pageData of pages) {
+    for (const row of pageData.results) {
+      accumulate(totalsAgg, readMetrics(row));
+      const breakdown = asRecord(row.breakdown);
+      const models = asRecord(breakdown.models);
+      for (const [model, rawMetrics] of Object.entries(models)) {
+        const agg = perModel.get(model) ?? newAggregator();
+        accumulate(agg, readMetrics(asRecord(rawMetrics)));
+        perModel.set(model, agg);
+      }
     }
   }
 
-  // Apply the endpoint's own metadata totals per field, falling back to the
-  // summed row metrics for any missing key. This covers pages where rows are
-  // empty or partial while metadata carries the authoritative totals (and
-  // avoids double counting rows outside the `results` pagination window).
-  const metadataFields: Array<[keyof MetricsAggregator, unknown]> = [
-    ["spend", metadata.total_spend],
-    ["promptTokens", metadata.total_prompt_tokens],
-    ["completionTokens", metadata.total_completion_tokens],
-    ["totalTokens", metadata.total_tokens],
-    ["apiRequests", metadata.total_api_requests],
-  ];
-  for (const [field, value] of metadataFields) {
-    const n = asNullableNumber(value);
-    if (n !== null) totalsAgg[field] = n;
+  // Metadata totals are query-scoped only when everything fit one page
+  // (the aggregated endpoint, or a single full page of the classic one).
+  // Otherwise they are page-scoped and summing the rows is the only way to
+  // get correct query totals.
+  if (opts.adoptMetadataTotals && pages.length === 1) {
+    const metadata = pages[0].metadata;
+    const metadataFields: Array<[keyof MetricsAggregator, unknown]> = [
+      ["spend", metadata.total_spend],
+      ["promptTokens", metadata.total_prompt_tokens],
+      ["completionTokens", metadata.total_completion_tokens],
+      ["totalTokens", metadata.total_tokens],
+      ["apiRequests", metadata.total_api_requests],
+    ];
+    for (const [field, value] of metadataFields) {
+      const n = asNullableNumber(value);
+      if (n !== null) totalsAgg[field] = n;
+    }
   }
 
   // Floor: the per-model breakdown is the minimum credible spend even when
   // metadata totals look stale or partially populated.
   const modelSpendSum = [...perModel.values()].reduce((sum, m) => sum + m.spend, 0);
-  if (perModel.size > 0 && modelSpendSum > totalsAgg.spend) {
+  if (modelSpendSum > totalsAgg.spend) {
     totalsAgg.spend = modelSpendSum;
   }
 
-  return toSummary(effectiveRange, totalsAgg, perModel);
+  return toSummary(range, totalsAgg, perModel);
+}
+
+/**
+ * Gateway-answered request counts (`GET /gateway/daily/activity`), the
+ * dashboard's Total Requests source. Includes traffic not logged in the
+ * spend tables (audio, passthrough, ...), so totals differ from the
+ * daily-activity endpoint; returns null when the proxy lacks the endpoint.
+ */
+export async function fetchGatewayRequests(
+  baseUrl: string,
+  apiKey: string,
+  timeoutMs: number,
+  range: Partial<UsageRange>,
+  options: { userId?: string } = {},
+): Promise<{ successful: number; failed: number; total: number } | null> {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  const params = new URLSearchParams({
+    start_date: range.startDate ?? resolveDefaultUsageRange().startDate,
+    end_date: range.endDate ?? resolveDefaultUsageRange().endDate,
+  });
+  if (options.userId) params.set("user_id", options.userId);
+  let response: Response;
+  try {
+    response = await fetch(`${normalized}/gateway/daily/activity?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw new CatalogError(
+      `Failed to fetch gateway activity: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+  if (response.status === 404 || response.status === 405) return null;
+  if (response.status === 401) {
+    throw new AuthError("Credential rejected by gateway. Run /login again.");
+  }
+  if (response.status === 403) {
+    throw new AuthError(
+      "Gateway denied access to gateway activity (403): this credential lacks the required permission. Ask a gateway admin to grant it.",
+    );
+  }
+  if (!response.ok) {
+    throw new CatalogError(
+      `Failed to fetch gateway activity: ${response.status}: ${response.statusText}`,
+    );
+  }
+  const record = asRecord(await response.json());
+  // Some builds expose the totals at the top level, others under `metadata`;
+  // merge both with metadata winning when present.
+  const metadata = asRecord(record.metadata);
+  const merged = { ...record, ...metadata };
+  const successful = asNullableNumber(merged.total_successful_requests) ?? 0;
+  const failed = asNullableNumber(merged.total_failed_requests) ?? 0;
+  const totalMeta = asNullableNumber(merged.total_requests);
+  return { successful, failed, total: totalMeta ?? successful + failed };
 }
 
 /**

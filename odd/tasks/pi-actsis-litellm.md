@@ -152,6 +152,15 @@ Approved decisions (user, 2026-09-22):
       budget-style gauge per row: model name padded, right-aligned spend,
       share percentage of the window total and an 8-cell ▰▱ gauge
       (usageGauge in usage.ts, tested).
+- [x] T26. Numbers must match the LiteLLM UI: (a) primary source = the
+      aggregated endpoint GET /user/daily/activity/aggregated (stable totals,
+      no pagination inflation; paginated endpoint double-counts/undercounts by
+      page scope and default page_size=2); (b) scope = user_id from the stored
+      credential (userId) so an admin token reports "Your Usage" not org-wide;
+      (c) paginate the legacy endpoint as fallback (sum rows, ignore per-page
+      metadata when total_pages>1); (d) gateway request counts from
+      GET /gateway/daily/activity (the dashboard's Total Requests source;
+      daily-activity counts upstream attempts). Test-first.
 ## Evidence log
 
 - 2026-10-09 (T25 delivery): Issue #13 + PR #14 (type:feature) merged rebase

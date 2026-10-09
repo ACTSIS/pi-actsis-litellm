@@ -122,7 +122,7 @@ describe("fetchModelUsage", () => {
   it("requests /user/daily/activity with explicit date params and bearer auth", async () => {
     let seenAuth: string | null = null;
     const recorder = mockFetch((requestUrl, request) => {
-      assert.equal(requestUrl.pathname, "/user/daily/activity");
+      assert.equal(requestUrl.pathname, "/user/daily/activity/aggregated");
       assert.equal(requestUrl.searchParams.get("start_date"), "2025-03-20");
       assert.equal(requestUrl.searchParams.get("end_date"), "2025-03-27");
       seenAuth = request.headers.get("authorization");
@@ -139,7 +139,7 @@ describe("fetchModelUsage", () => {
       assert.equal(recorder.captured.length, 1);
       assert.ok(
         recorder.captured[0].startsWith(
-          "http://gw.example:4000/user/daily/activity",
+          "http://gw.example:4000/user/daily/activity/aggregated",
         ),
       );
     } finally {
@@ -658,5 +658,146 @@ describe("buildTopModelsStatusEntries (table + gauge)", () => {
     assert.equal(usageGauge(0), "▱".repeat(8));
     assert.equal(usageGauge(100), "▰".repeat(8));
     assert.equal([...usageGauge(50)].filter((c) => c === "▰").length, 4);
+  });
+});
+
+import {
+  fetchGatewayRequests,
+} from "../extensions/lib/usage.ts";
+
+describe("fetchModelUsage (dashboard-parity sources)", () => {
+  it("hits the aggregated endpoint with user_id and adopts its query-scoped totals", async () => {
+    const calls: string[] = [];
+    const recorder = mockFetch((requestUrl) => {
+      calls.push(requestUrl.pathname + requestUrl.search);
+      return jsonResponse({
+        results: [
+          {
+            date: "2026-10-09",
+            metrics: { spend: 1, total_tokens: 10, api_requests: 2 },
+            breakdown: {
+              models: {
+                "openai/x": { metrics: { spend: 1, total_tokens: 10, api_requests: 2 } },
+              },
+            },
+          },
+          {
+            date: "2026-10-08",
+            metrics: { spend: 2, total_tokens: 20, api_requests: 3 },
+            breakdown: {
+              models: {
+                "openai/x": { metrics: { spend: 2, total_tokens: 20, api_requests: 3 } },
+              },
+            },
+          },
+        ],
+        metadata: { total_spend: 3, total_tokens: 30, total_api_requests: 5, total_pages: 1 },
+      });
+    });
+    try {
+      const summary = await fetchModelUsage("http://gw:4000", "sk-x", 5_000, RANGE, { userId: "u-1" });
+      assert.equal(calls.length, 1);
+      assert.ok(calls[0].includes("/user/daily/activity/aggregated"));
+      assert.ok(calls[0].includes("user_id=u-1"));
+      assert.equal(summary.totals.spend, 3);
+      assert.equal(summary.totals.totalTokens, 30);
+      assert.equal(summary.totals.apiRequests, 5);
+      assert.deepEqual(summary.models[0], {
+        model: "openai/x",
+        spend: 3,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 30,
+        apiRequests: 5,
+      });
+    } finally {
+      recorder.restore();
+    }
+  });
+
+  it("falls back to the paginated endpoint when aggregated is unavailable, summing rows across pages", async () => {
+    const calls: string[] = [];
+    const recorder = mockFetch((requestUrl) => {
+      const path = requestUrl.pathname + requestUrl.search;
+      calls.push(path);
+      if (path.includes("/aggregated")) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      if (requestUrl.searchParams.get("page") === "2") {
+        return jsonResponse({
+          results: [
+            { date: "2026-10-04", metrics: { spend: 1, total_tokens: 10, api_requests: 2 }, breakdown: { models: { "openai/y": { metrics: { spend: 1, total_tokens: 10, api_requests: 2 } } } } },
+          ],
+          metadata: { total_spend: 1, total_api_requests: 2 }, // page-scoped: must NOT be adopted
+        });
+      }
+      return jsonResponse({
+        results: [
+          { date: "2026-10-05", metrics: { spend: 1, total_tokens: 10, api_requests: 1 }, breakdown: { models: { "openai/x": { spend: 1, total_tokens: 10, api_requests: 1 } } } },
+        ],
+        metadata: { total_spend: 1, total_api_requests: 1, has_more: true, total_pages: 2 },
+      });
+    });
+    try {
+      const summary = await fetchModelUsage("http://gw:4000", "sk-x", 5_000, RANGE, { userId: "u-1" });
+      assert.equal(calls.filter((c) => c.startsWith("/user/daily/activity?")).length, 2);
+      assert.ok(calls.some((c) => c.includes("page=2")));
+      // Totals from summed rows (1+1), NOT from any single page's metadata.
+      assert.equal(summary.totals.spend, 2);
+      assert.equal(summary.totals.apiRequests, 3);
+      assert.deepEqual(
+        summary.models.map((m) => [m.model, m.spend]),
+        [
+          ["openai/x", 1],
+          ["openai/y", 1],
+        ],
+      );
+    } finally {
+      recorder.restore();
+    }
+  });
+});
+
+describe("fetchGatewayRequests", () => {
+  it("sums successful and failed gateway answers for the user", async () => {
+    const recorder = mockFetch((requestUrl) => {
+      assert.equal(requestUrl.pathname, "/gateway/daily/activity");
+      assert.ok(requestUrl.searchParams.get("user_id") === "u-1");
+      return jsonResponse({
+        metadata: { total_successful_requests: 86_272, total_failed_requests: 527 },
+        results: [],
+      });
+    });
+    try {
+      const requests = await fetchGatewayRequests("http://gw:4000", "sk-x", 5_000, RANGE, { userId: "u-1" });
+      assert.deepEqual(requests, { successful: 86_272, failed: 527, total: 86_799 });
+    } finally {
+      recorder.restore();
+    }
+  });
+
+  it("returns null when the endpoint is unavailable (old proxies)", async () => {
+    const recorder = mockFetch(() => jsonResponse({ detail: "nf" }, 404));
+    try {
+      const requests = await fetchGatewayRequests("http://gw:4000", "sk-x", 5_000, RANGE, { userId: "u-1" });
+      assert.equal(requests, null);
+    } finally {
+      recorder.restore();
+    }
+  });
+});
+
+describe("fetchGatewayRequests (top-level totals shape)", () => {
+  it("reads totals at the top level when metadata omits them", async () => {
+    const recorder = mockFetch((requestUrl) => {
+      assert.equal(requestUrl.pathname, "/gateway/daily/activity");
+      return jsonResponse({ total_successful_requests: 100, total_failed_requests: 4, results: [] });
+    });
+    try {
+      const requests = await fetchGatewayRequests("http://gw:4000", "sk-x", 5_000, RANGE, { userId: "u-1" });
+      assert.deepEqual(requests, { successful: 100, failed: 4, total: 104 });
+    } finally {
+      recorder.restore();
+    }
   });
 });

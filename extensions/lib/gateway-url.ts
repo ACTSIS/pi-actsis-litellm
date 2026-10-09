@@ -7,7 +7,31 @@ export interface GatewayUrlSource {
 
 export interface AuthJsonEntry {
   tokenEndpoint?: string;
+  userId?: string;
   [key: string]: unknown;
+}
+
+/**
+ * Reads the LiteLLM user id stored inside the provider credential (set at
+ * login). Scopes usage queries to "Your Usage" (dashboard parity) instead of
+ * the org-wide view an admin token otherwise gets.
+ */
+export async function readStoredCredentialUserId(
+  authPath: string,
+  providerId: string,
+  loader: AuthJsonLoader = defaultAuthJsonLoader,
+): Promise<string | null> {
+  let parsed: unknown;
+  try {
+    parsed = await loader(authPath);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const entry = (parsed as Record<string, unknown>)[providerId];
+  if (typeof entry !== "object" || entry === null) return null;
+  const userId = (entry as AuthJsonEntry).userId;
+  return typeof userId === "string" && userId ? userId : null;
 }
 
 export type AuthJsonLoader = (authPath: string) => Promise<unknown>;
