@@ -133,6 +133,15 @@ Approved decisions (user, 2026-09-22):
       merging same-alias entries at display time; unknown keys (non-chat models
       absent from the chat catalog) stay as-is.
 
+- [x] T22. Tabulated /usage output: aligned fixed-width table (Model / Spend /
+      Tokens / Reqs) with compact token counts, top-N truncation and a Total row.
+      Test-first.
+- [x] T23. Top-5 models widget in the TUI just below the budget line: status-area
+      block via setWidget belowEditor, window = last 7 days, refresh on the same
+      triggers as the budget widget (session start, agent_end, limit rewrite,
+      manual /budget) with a 5-minute TTL, public aliasing like /usage,
+      fail-silent (clears the block on error/data-less states).
+
 ## Evidence log
 
 - 2026-10-09 (T21 delivery): Issue #7 + PR #8 (type:feature) merged rebase
