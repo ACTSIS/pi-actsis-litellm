@@ -135,6 +135,11 @@ Approved decisions (user, 2026-09-22):
 
 ## Evidence log
 
+- 2026-10-09 (T21 delivery): Issue #7 + PR #8 (type:feature) merged rebase
+  @ be32271; /usage shows public oc/... names via suffix aliasing over the
+  chat catalog (mapModelAliases + applyModelAliases); unknown keys keep the
+  internal name. 8 new tests, suite 248/248, CI green.
+
 - 2026-10-09 (T20 delivery): Issue #5 + PR #6 (type:bug) merged rebase
   @ b809cc9; extractUsableApiKey reads AuthResult.auth.apiKey (pi auth
   resolution) with oauth-credential fallbacks; /usage functional, /status
