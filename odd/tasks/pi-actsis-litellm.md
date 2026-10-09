@@ -167,6 +167,10 @@ Approved decisions (user, 2026-09-22):
 - 2026-10-09 (RDD round 2, lineage review-1af613d382138534): APPROVED over the
   corrected candidate; acknowledgement burned. Advisory only (informational):
   WARNING commands.ts:378-381 + 3 SUGGESTIONs. Delivery: ordinary policy.
+- 2026-10-09 (T19 TLS bootstrap): Issue #3 (status:approved, type:bug) + PR #4
+  (merged rebase, 411eb67). tls-config.ts unions bundled+system CAs at startup
+  (fail-open, once per session, opt-out ACTSIS_LITELLM_NO_SYSTEM_CA=1); TLS
+  hint carries Windows/Linux remediation. 13 new tests, suite 233/233, CI green.
 - 2026-10-09 (T18 delivery): Issue #1 (status:approved) + PR #2 (type:feature,
   Closes #1). Push initially rejected: remote history had been rewritten
   (unrelated roots); rebased feature commits onto rewritten main @ a6e377b.
