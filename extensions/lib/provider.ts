@@ -340,7 +340,21 @@ export async function buildProviderConfig(
       return storedModels;
     }
 
-    const refreshCfg = await resolveNonInteractiveConfig();
+    const refreshCfg = await (async (): Promise<ActsisEnabledConfig | null> => {
+      if (baseUrl) {
+        // Prefer the base URL this provider was built with (passed at build
+        // time from the interactive login); environment/config probes must not
+        // override it, and refresh must not silently depend on ambient
+        // machine state (stored credentials, ~/.pi files) to run in tests.
+        return {
+          baseUrl,
+          providerId,
+          catalogTtlMs,
+          requestTimeoutMs,
+        };
+      }
+      return resolveNonInteractiveConfig();
+    })();
     if (!refreshCfg) {
       return storedModels;
     }
