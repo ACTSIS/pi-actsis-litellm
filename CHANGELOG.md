@@ -2,6 +2,14 @@
 
 ## 0.1.0 — Unreleased
 
+- **Internal CA TLS bootstrap** — At startup the extension unions Node's bundled
+  root CAs with the OS system certificate store (`--use-system-ca` behavior,
+  Node ≥ 22.19.0), so gateways signed by a private/internal CA (installed in
+  Windows certmgr/certlm) work in the login flow without any per-machine setup.
+  Strictly additive, once per session, fail-open; opt-out via
+  `ACTSIS_LITELLM_NO_SYSTEM_CA=1`. TLS trust errors now carry concrete Windows
+  and Linux remediation steps (`setx NODE_USE_SYSTEM_CA 1`, `certutil -encode`,
+  `NODE_EXTRA_CA_CERTS`).
 - **Per-model usage command** — `/actsis-litellm:usage` reports spend, tokens, and request
   counts aggregated per model via `GET /user/daily/activity`. Args: nothing (last 30 days),
   a day count (`14`), or an inclusive range (`2025-03-01 .. 2025-03-31`, also `to`/`,`/`→`).

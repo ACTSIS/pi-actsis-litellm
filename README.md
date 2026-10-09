@@ -101,6 +101,26 @@ The provider's model list is synced from the gateway at `/v1/models` (called wit
 - **Models store:** After each successful sync the catalog is also published to pi's persistent models store, so model metadata (context window, prices) stays fresh in the `/model` picker.
 - **Overrides:** You can override any model's metadata via pi's `models.json` `modelOverrides` mechanism.
 
+## TLS with a private (internal) CA
+
+Node.js ships a fixed snapshot of Mozilla's root CAs and ignores the OS
+certificate store, so a gateway whose HTTPS certificate is issued by a private
+CA (common in corporate environments) fails validation inside pi's login and
+chat flows even when the CA is correctly installed in Windows
+(`certmgr.msc`/`certlm.msc`).
+
+This extension handles that frictionlessly: at startup it **auto-loads the OS
+system CAs on top of Node's bundled set** (the `--use-system-ca` behavior,
+Node ≥ 22.19.0). Browsers/public HTTPS keep working exactly as before; internal
+CA-signed gateways become reachable without any per-machine setup. It runs once
+per session and never blocks startup if TLS handling fails.
+
+- **Opt-out:** set `ACTSIS_LITELLM_NO_SYSTEM_CA=1` before starting pi.
+- **If trust still fails** (older Node, unusual store setup), the error message
+  reports the exact fix: Windows → `setx NODE_USE_SYSTEM_CA 1` (Node ≥ 22.19.0)
+  or export the CA to PEM (`certutil -encode ca.cer ca.pem`) and set
+  `NODE_EXTRA_CA_CERTS`; Linux → `--use-openssl-ca` / `SSL_CERT_FILE`.
+
 ## Budget & rate-limit status
 
 The extension shows a live budget indicator in pi's status line (key `actsis-litellm:budget`), rendered with the same gauge style as other pi extensions:
