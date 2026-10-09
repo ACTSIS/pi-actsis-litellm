@@ -148,6 +148,10 @@ Approved decisions (user, 2026-09-22):
       each status entry as one Integrations line (sorted by key). Replace the
       footer block with status rows: title entry + one entry per model row,
       keys sorting right after the budget key; drop the belowEditor block.
+- [x] T25. Tabulate the top-5 status rows like the /usage table and add a
+      budget-style gauge per row: model name padded, right-aligned spend,
+      share percentage of the window total and an 8-cell ▰▱ gauge
+      (usageGauge in usage.ts, tested).
 ## Evidence log
 
 - 2026-10-09 (T24 delivery): Issue #11 + PR #12 (type:bug) merged rebase
