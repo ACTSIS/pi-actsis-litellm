@@ -2,6 +2,11 @@
 
 ## 0.1.0 — Unreleased
 
+- **Credential resolution fix for REST commands** — `/actsis-litellm:usage` (and the
+  `/status` budget line) now read the bearer token from pi's auth resolution
+  (`AuthResult.auth.apiKey`), the same source the budget widget uses; the previous
+  check looked for a nonexistent `credential` field and always reported
+  "No usable credential. Run /login first." for valid logins.
 - **Internal CA TLS bootstrap** — At startup the extension unions Node's bundled
   root CAs with the OS system certificate store (`--use-system-ca` behavior,
   Node ≥ 22.19.0), so gateways signed by a private/internal CA (installed in
