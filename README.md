@@ -140,9 +140,13 @@ Budget $1.00 used (no cap)              (without a cap)
 Shows spend, tokens, and request counts aggregated per model via the proxy's `GET /user/daily/activity` endpoint (daily spend/usage with a per-model breakdown).
 
 ```
-Usage 2025-02-26 → 2025-03-27 (30 days): spend $1.2345, 89000 tokens, 210 requests
-  gpt-x     $0.9800  61000 tok  130 reqs
-  claude-y  $0.2545  28000 tok  80 reqs
+Usage 2025-02-26 → 2025-03-27 (30 days): $1.2345
+Model                      Spend  Tokens  Reqs
+--------------------------------------------------
+oc/gpt-x                 $0.9800   61.0k   130
+oc/claude-y              $0.2545   28.0k    80
+--------------------------------------------------
+Total                    $1.2345   89.0k   210
 ```
 
 - **Arguments:** nothing → last 30 days inclusive; `14` → last N days; `2025-03-01 .. 2025-03-31` (also `to`, `,`, `→` as separators).
@@ -150,6 +154,17 @@ Usage 2025-02-26 → 2025-03-27 (30 days): spend $1.2345, 89000 tokens, 210 requ
 - **Data source:** `GET {gateway}/user/daily/activity?start_date=<start>&end_date=<end>`; totals come from the endpoint's `metadata` when present, otherwise from summing the daily rows; per-model rows aggregate `results[].breakdown.models` across days, sorted by spend descending.
 - **Caveat:** LiteLLM only calculates spend for OpenAI-compatible `/v1/chat/completions` traffic; `/v1/messages` (Anthropic format), passthrough, and unlogged requests report zero or are absent.
 - **Permission errors:** `401` maps to "run /login again"; `403` means the credential lacks the spend/usage routes permission (admin action, re-login does not fix it).
+
+## Top models widget (TUI)
+
+pi's status area shows a boxed **Top models (7d)** block just below the budget
+indicator: the top 5 public model names by spend over the last 7 days, refreshed
+on the same triggers as the budget indicator (session start, after each agent
+turn, after a rewritten budget error, and manual `/actsis-litellm:budget`) with a
+5-minute TTL. Any failure clears the block silently; when there is no usage in
+the window the block is hidden.
+
+## Gateway error normalization
 
 When a request fails, LiteLLM budget and rate-limit errors are rewritten into actionable messages:
 
