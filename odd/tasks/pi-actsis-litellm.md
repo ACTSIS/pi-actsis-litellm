@@ -126,6 +126,13 @@ Approved decisions (user, 2026-09-22):
       credential access; the current /usage only checks authResult.credential
       (nonexistent field) so any valid login reports "No usable credential".
 
+- [x] T21. Public model aliasing for /usage: LiteLLM spend logs record the
+      internal deployment name (litellm_params.model, e.g. "openai/glm-5.3-flash")
+      while users know the public model_name ("oc/glm-5.3-flash"). Map breakdown
+      keys to public catalog ids by exact id or shared suffix after the last "/",
+      merging same-alias entries at display time; unknown keys (non-chat models
+      absent from the chat catalog) stay as-is.
+
 ## Evidence log
 
 - 2026-10-09 (T20 delivery): Issue #5 + PR #6 (type:bug) merged rebase

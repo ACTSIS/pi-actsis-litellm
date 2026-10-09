@@ -2,6 +2,11 @@
 
 ## 0.1.0 — Unreleased
 
+- **Public model names for /usage** — Spend logs record LiteLLM's internal deployment
+  names (`openai/glm-5.3-flash`); `/usage` now maps them to the public catalog ids users
+  know (`oc/glm-5.3-flash`) by shared suffix over the chat catalog, merging rows that alias
+  to the same public model (sorted by spend). Unknown keys (non-chat models absent from the
+  catalog) keep their internal name.
 - **Credential resolution fix for REST commands** — `/actsis-litellm:usage` (and the
   `/status` budget line) now read the bearer token from pi's auth resolution
   (`AuthResult.auth.apiKey`), the same source the budget widget uses; the previous
