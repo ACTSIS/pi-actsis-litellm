@@ -113,6 +113,13 @@ Approved decisions (user, 2026-09-22):
     `catalog.test.ts:864` ("refreshModels degrades gracefully when cache save
     fails" / "when publish rejects"). Same set on pristine main.
 
+- [x] T19. TLS system-CA bootstrap (frictionless): extension startup unions
+      Node's bundled CAs with the OS system-store CAs via
+      tls.setDefaultCACertificates (>=22.19.0), one-shot per session, fail-open
+      (never blocks startup), opt-out via ACTSIS_LITELLM_NO_SYSTEM_CA=1; test-first
+      (test/tls-config.test.ts); improves the TLS hint error message with explicit
+      Windows steps (setx NODE_USE_SYSTEM_CA 1).
+
 ## Evidence log
 
 - 2026-09-24: T15 internal-reference sanitation. A full-history audit found
