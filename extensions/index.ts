@@ -14,6 +14,7 @@ import {
   buildLogoutHandler,
   buildUsageHandler,
   defaultCommandDeps,
+  extractUsableApiKey,
 } from "./lib/commands.ts";
 import { normalizeOverflowError } from "./lib/overflow.ts";
 import {
@@ -21,6 +22,13 @@ import {
   budgetUsagePercent,
 } from "./lib/limit-errors.ts";
 import { fetchBudgetInfo, type BudgetInfo } from "./lib/budget.ts";
+import {
+  applyModelAliases,
+  buildTopModelsBlock,
+  fetchModelUsage,
+  mapModelAliases,
+  resolveUsageRangeDays,
+} from "./lib/usage.ts";
 import { configureSystemCa } from "./lib/tls-config.ts";
 
 export interface LiteLLMExtensionState {
@@ -75,6 +83,7 @@ async function getBaseUrl(): Promise<string | null> {
 interface WidgetContext {
   modelRegistry: {
     getProviderAuth(providerId: string): Promise<unknown>;
+    getAll?(providerId?: string): Array<{ provider?: string; id?: string }>;
   };
   ui: {
     setWidget(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void;
@@ -87,6 +96,15 @@ interface WidgetContext {
 // re-implemented locally so this extension renders the same visual language
 // without importing or depending on gentle-pi being installed.
 const BUDGET_STATUS_KEY = "actsis-litellm:budget";
+const TOP_MODELS_WIDGET_KEY = "actsis-litellm:top-models";
+const TOP_MODELS_TTL_MS = 5 * 60 * 1000;
+const TOP_MODELS_WINDOW_DAYS = 7;
+
+interface TopModelsCache {
+  fetchedAtMs: number;
+  block: string[];
+}
+let topModelsCache: TopModelsCache | null = null;
 const GAUGE_CELLS = 8;
 const GAUGE_FILLED = "▰";
 const GAUGE_EMPTY = "▱";
@@ -168,6 +186,108 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<string | undefin
     const reason = err instanceof Error ? err.message : String(err);
     ctx.ui.setStatus?.(BUDGET_STATUS_KEY, `Budget unavailable: ${reason}`);
     return `error: ${reason}`;
+  }
+}
+
+async function refreshTopModelsWidget(
+  ctx: WidgetContext,
+  options: { force?: boolean } = {},
+): Promise<void> {
+  if (!ctx.hasUI) return;
+
+  const nowMs = Date.now();
+  if (
+    !options.force &&
+    topModelsCache &&
+    nowMs - topModelsCache.fetchedAtMs < TOP_MODELS_TTL_MS
+  ) {
+    return; // cached block still fresh
+  }
+
+  const render = (block: string[], fetchedAtMs: number): void => {
+    topModelsCache = { fetchedAtMs, block };
+    ctx.ui.setWidget(TOP_MODELS_WIDGET_KEY, block, { placement: "belowEditor" });
+  };
+  const clear = (): void => {
+    topModelsCache = null;
+    ctx.ui.setWidget(TOP_MODELS_WIDGET_KEY, undefined, { placement: "belowEditor" });
+  };
+
+  try {
+    const providerId = state.providerId;
+    if (!providerId) {
+      clear();
+      return;
+    }
+
+    const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
+    const apiKey = extractUsableApiKey(authResult);
+    if (!apiKey) {
+      clear();
+      return;
+    }
+
+    const baseUrl = await getBaseUrl();
+    if (!baseUrl) {
+      clear();
+      return;
+    }
+
+    const storedUrl = await readStoredCredentialGatewayUrl(
+      defaultAuthPath(),
+      providerId,
+    );
+    const cfg = await resolveConfig({
+      env: process.env,
+      fileLoader: async (filePath) => {
+        try {
+          const { readFile } = await import("node:fs/promises");
+          const raw = await readFile(filePath, "utf8");
+          return JSON.parse(raw) as ConfigFileShape;
+        } catch {
+          return null;
+        }
+      },
+      storedUrl,
+      prompt: async () => undefined,
+    });
+
+    const range = resolveUsageRangeDays(TOP_MODELS_WINDOW_DAYS, nowMs);
+    const summary = await fetchModelUsage(
+      baseUrl,
+      apiKey,
+      cfg.requestTimeoutMs,
+      range,
+    );
+    if (summary.models.length === 0 || (summary.totals.spend ?? 0) <= 0) {
+      clear();
+      return;
+    }
+
+    // Public names, same mapping the /usage command shows.
+    const publicIds = (ctx.modelRegistry.getAll?.() ?? [])
+      .filter((m) => m.provider === providerId)
+      .map((m) => m.id ?? "")
+      .filter((id) => id.length > 0);
+    const display = applyModelAliases(
+      summary,
+      mapModelAliases(
+        summary.models.map((m) => m.model),
+        publicIds,
+      ),
+    );
+
+    render(
+      buildTopModelsBlock({
+        windowLabel: "7d",
+        rows: display.models.map((m) => ({ model: m.model, spend: m.spend })),
+      }),
+      nowMs,
+    );
+  } catch {
+    // The top-models block is informative: any failure clears it silently;
+    // the next trigger retries after the TTL.
+    clear();
   }
 }
 
@@ -260,6 +380,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     description: "Force a budget refresh and report the outcome",
     handler: async (_args: string, ctx: unknown) => {
       const outcome = await refreshBudgetWidget(ctx as WidgetContext);
+      await refreshTopModelsWidget(ctx as unknown as WidgetContext, { force: true });
       if (ctx && typeof ctx === "object" && "hasUI" in ctx && (ctx as { hasUI?: boolean }).hasUI) {
         const ui = (ctx as { ui?: { notify?(message: string, level?: string): void } }).ui;
         ui?.notify?.(`Budget refresh: ${outcome ?? "ok"}`, "info");
@@ -293,6 +414,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     );
     if (limitRewrite) {
       await refreshBudgetWidget(ctx as unknown as WidgetContext);
+      await refreshTopModelsWidget(ctx as unknown as WidgetContext);
       return { message: limitRewrite as unknown as AssistantMessage };
     }
 
@@ -304,10 +426,12 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
       ctx.ui.notify("pi-actsis-litellm loaded", "info");
     }
     await refreshBudgetWidget(ctx as unknown as WidgetContext);
+    await refreshTopModelsWidget(ctx as unknown as WidgetContext);
   });
 
   pi.on("agent_end", async (_event, ctx) => {
     await refreshBudgetWidget(ctx as unknown as WidgetContext);
+    await refreshTopModelsWidget(ctx as unknown as WidgetContext);
   });
 
   async function registerWithConfig(providerId: string): Promise<void> {
