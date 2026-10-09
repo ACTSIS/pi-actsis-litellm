@@ -430,3 +430,125 @@ describe("applyModelAliases", () => {
     assert.equal(original.models.length, 3);
   });
 });
+
+import {
+  buildTopModelsBlock,
+  formatCompactTokens,
+  formatUsageTable,
+  resolveUsageRangeDays,
+} from "../extensions/lib/usage.ts";
+
+describe("resolveUsageRangeDays", () => {
+  it("returns the last N days inclusive of today", () => {
+    const range = resolveUsageRangeDays(7, Date.UTC(2025, 2, 27, 15, 30, 0));
+    assert.deepEqual(range, { startDate: "2025-03-21", endDate: "2025-03-27" });
+  });
+
+  it("clamps to at least one day", () => {
+    const range = resolveUsageRangeDays(0, Date.UTC(2025, 2, 27));
+    assert.equal(range.startDate, "2025-03-27");
+  });
+});
+
+describe("formatCompactTokens", () => {
+  it("uses B/M/k scales", () => {
+    assert.equal(formatCompactTokens(786_264_305), "786.3M");
+    assert.equal(formatCompactTokens(1_289_046), "1.29M");
+    assert.equal(formatCompactTokens(14_763), "14.8k");
+    assert.equal(formatCompactTokens(837), "837");
+  });
+
+  it("renders null as dash", () => {
+    assert.equal(formatCompactTokens(null), "-");
+  });
+});
+
+describe("formatUsageTable", () => {
+  const summary = () => ({
+    startDate: "2025-03-01",
+    endDate: "2025-03-31",
+    totals: {
+      spend: 0.3,
+      promptTokens: 100,
+      completionTokens: 200,
+      totalTokens: 300,
+      apiRequests: 6,
+    },
+    models: [
+      { model: "oc/glm-5.3-flash", spend: 0.2, promptTokens: 10, completionTokens: 20, totalTokens: 30, apiRequests: 2 },
+      { model: "oc/qwen3.6-35b", spend: 0.1, promptTokens: 70, completionTokens: 140, totalTokens: 210, apiRequests: 3 },
+    ],
+  });
+
+  it("renders an aligned table with header, rows and totals row", () => {
+    const lines = formatUsageTable(summary());
+    assert.match(lines[0], /^Usage 2025-03-01/);
+    assert.match(lines[1], /^Model\b/);
+    assert.ok(lines[1].includes("Spend"));
+    assert.ok(lines.some((l) => l.includes("---")));
+    assert.ok(lines.at(-1)!.includes("Total"));
+    assert.ok(lines.at(-1)!.includes("$0.3000"));
+    // Columns are aligned: right-aligned numeric columns end at the same index.
+    const spendEnd = lines[1].indexOf("Spend") + "Spend".length;
+    const rowEnd = lines[3].indexOf("$0.2000") + "$0.2000".length;
+    assert.equal(spendEnd, rowEnd);
+  });
+
+  it("truncates to topN when requested", () => {
+    const many = summary();
+    many.models = [
+      ...many.models,
+      ...Array.from({ length: 5 }, (_, i) => ({ model: `m${i}`, spend: 0.001 * (5 - i), promptTokens: 1, completionTokens: 1, totalTokens: 2, apiRequests: 1 })),
+    ];
+    const lines = formatUsageTable(many, { topN: 5 });
+    assert.match(lines.at(-1)!, /Total/);
+    // Top 5 = 2 original rows + m0..m2 (m3/m4 are cut, counted in the note).
+    assert.ok(lines.some((l) => l.includes("m0")));
+    assert.ok(lines.some((l) => l.includes("m2")));
+    assert.ok(!lines.some((l) => l.includes("m3")));
+    assert.ok(!lines.some((l) => l.includes("m4")));
+    assert.ok(lines.some((l) => l.includes("(+2 more models)")));
+    assert.ok(lines.indexOf("(+2 more models)") < lines.length - 1);
+  });
+
+  it("renders the no-usage message for empty models", () => {
+    const empty = summary();
+    empty.models = [];
+    const lines = formatUsageTable(empty);
+    assert.match(lines.at(-1)!, /no logged model usage/);
+  });
+});
+
+describe("buildTopModelsBlock", () => {
+  it("renders an all-box top-5 block with title and rows", () => {
+    const lines = buildTopModelsBlock({
+      windowLabel: "7d",
+      rows: [
+        { model: "oc/glm-5.3-flash", spend: 33.0417 },
+        { model: "oc/deepseek-v4.1-flash", spend: 6.7047 },
+      ],
+    });
+    assert.ok(lines[0].startsWith("┌"));
+    assert.match(lines[0], /Top models \(7d\)/);
+    assert.ok(lines.at(-1)!.startsWith("└"));
+    assert.ok(lines.some((l) => l.includes("oc/glm-5.3-flash") && l.includes("$33.04")));
+    // All rows render the same width (box aligned).
+    const widths = new Set(lines.map((l) => [...l].length));
+    assert.equal(widths.size, 1);
+  });
+
+  it("caps rows at 5 models", () => {
+    const lines = buildTopModelsBlock({
+      windowLabel: "7d",
+      rows: Array.from({ length: 8 }, (_, i) => ({ model: `m${i}`, spend: 1 - i / 10 })),
+    });
+    const dataRows = lines.filter((l) => l.includes("│") && !l.includes("Top models"));
+    assert.equal(dataRows.length, 5);
+  });
+
+  it("does not mutate the input", () => {
+    const rows = [{ model: "m1", spend: 1 }];
+    buildTopModelsBlock({ windowLabel: "7d", rows });
+    assert.equal(rows.length, 1);
+  });
+});
