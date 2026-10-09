@@ -2,6 +2,17 @@
 
 ## 0.1.0 — Unreleased
 
+- **Per-model usage command** — `/actsis-litellm:usage` reports spend, tokens, and request
+  counts aggregated per model via `GET /user/daily/activity`. Args: nothing (last 30 days),
+  a day count (`14`), or an inclusive range (`2025-03-01 .. 2025-03-31`, also `to`/`,`/`→`).
+  Per-model rows aggregate `results[].breakdown.models` across days, sorted by spend descending;
+  totals prefer the endpoint's `metadata` per field, falling back to summed row metrics for any
+  missing key. Caveat: LiteLLM only calculates spend for OpenAI-compatible
+  `/v1/chat/completions` traffic (`/v1/messages`, passthrough, and unlogged requests report
+  zero or are absent).
+- **Login labeling fix** — The browser sign-in option is now labeled **"Sign in with OAuth
+  (browser)"** and the provider **"Actsis LiteLLM (OAuth)"**: the gateway uses OAuth2 PKCE,
+  not SSO. Internal `authMode: "sso"` values are unchanged for stored-credential compatibility.
 - **Network error cause reporting** — Failed gateway requests now name the underlying cause hidden inside Node's opaque `TypeError: fetch failed` (DNS `ENOTFOUND`, `ECONNREFUSED`, TLS trust codes like `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, timeouts, resets) with an actionable hint for known classes (e.g. install the issuing CA and restart Node with `--use-system-ca` for internal-CA gateways). Applies to discovery, client registration, token exchange/refresh/revoke, model catalog endpoints and both budget endpoints; catalog network failures stay `CatalogError` so a connectivity problem is never misreported as a rejected API key.
 - **Budget & rate-limit status line** — Live budget indicator in pi's status line (`actsis-litellm:budget`, gauge `▰▱`): `GET /key/info` first (nested `info` shape from LiteLLM ≥ 1.100.1 and legacy flat shape), falling back to `GET /user/info` for SSO credentials. Refreshed on session start, after each agent turn, after a rewritten budget or throttling error, and via the new `/actsis-litellm:budget` command. A 403 with a LiteLLM `detail` message is reported as a missing `info_routes` permission (admin action), not as a re-login case.
 - **Budget/rate-limit error normalization** — LiteLLM `budget_exceeded` errors are rewritten as actionable top-up/reset messages; `throttling_error` errors append the limit type and reset time. Other 429s pass through to pi's normal retry path.
