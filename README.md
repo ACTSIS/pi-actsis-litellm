@@ -53,14 +53,15 @@ Only `baseUrl` is required in the config file. When no URL is configured at star
 
 ## Commands
 
-The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **Actsis LiteLLM (SSO)**.
+The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **Actsis LiteLLM (OAuth)**.
 
 | Command | Description |
 |---------|-------------|
 | `/login` | pi's native login flow. Once this provider is registered, select `actsis-litellm` to authenticate. |
 | `/actsis-litellm:status` | Show provider registration, credential state and source, catalog count, cache age, gateway URL, and a budget summary (stored credentials). |
 | `/actsis-litellm:models` | Force a fresh model catalog sync and show added/removed models. |
-| `/actsis-litellm:logout` | Revoke the SSO refresh token on the gateway and clear local credentials and cache. |
+| `/actsis-litellm:usage` | Show per-model usage (spend, tokens, requests). Args: nothing (last 30 days), a day count like `14`, or a range like `2025-03-01 .. 2025-03-31`. |
+| `/actsis-litellm:logout` | Revoke the OAuth refresh token on the gateway and clear local credentials and cache. |
 | `/actsis-litellm:budget` | Force a budget refresh and report the outcome as a notification. |
 
 ## Login flow
@@ -68,8 +69,8 @@ The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **A
 When you run `/login` and pick `actsis-litellm`:
 
 1. **Gateway URL prompt** — If the gateway URL is not already configured, the extension asks you for it (e.g. `https://gateway.example.com`).
-2. **Sign-in method** — Choose **SSO (browser)** or **API key**.
-3. **SSO path (browser):**
+2. **Sign-in method** — Choose **OAuth (browser)** or **API key**.
+3. **OAuth path (browser):**
    - **Discovery** — The extension fetches `/.well-known/litellm-cli-auth` from the gateway.
    - **Dynamic client registration** — A public, loopback-only OAuth client is registered.
    - **PKCE S256** — A local `code_verifier` is generated and hashed into a `code_challenge`.
@@ -81,8 +82,8 @@ When you run `/login` and pick `actsis-litellm`:
    - The key is validated against `GET {gateway}/v1/models`.
    - A long-lived synthetic OAuth credential is stored so pi treats it like any other credential.
 5. **Credential storage** — pi stores the resulting credentials in `~/.pi/agent/auth.json`.
-6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials automatically. API key credentials do not refresh.
-7. **Logout** — `/actsis-litellm:logout` clears local state and, for SSO, sends the `refresh_token` to the gateway's revoke endpoint.
+6. **Refresh rotation** — For the OAuth flow, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials automatically. API key credentials do not refresh.
+7. **Logout** — `/actsis-litellm:logout` clears local state and, for OAuth credentials, sends the `refresh_token` to the gateway's revoke endpoint.
 
 ## Model catalog
 
@@ -109,10 +110,25 @@ Budget ▰▰▱▱▱▱▱▱ 25% · $1.00/$4.00      (with a budget cap)
 Budget $1.00 used (no cap)              (without a cap)
 ```
 
-- **Data sources:** `GET {gateway}/key/info` is tried first (supports both the LiteLLM ≥ 1.100.1 nested `{ key, info: {...} }` shape and the older flat shape). If it fails for a non-auth reason (SSO tokens are usually not virtual keys), it falls back to `GET {gateway}/user/info`, which reports user-level spend and budget. A `401`/`403` response does not fall back; it surfaces as a credential or permission error.
+- **Data sources:** `GET {gateway}/key/info` is tried first (supports both the LiteLLM ≥ 1.100.1 nested `{ key, info: {...} }` shape and the older flat shape). If it fails for a non-auth reason (OAuth tokens are usually not virtual keys), it falls back to `GET {gateway}/user/info`, which reports user-level spend and budget. A `401`/`403` response does not fall back; it surfaces as a credential or permission error.
 - **Permission errors:** A `403` with a LiteLLM `detail` message means the key lacks the `info_routes` permission; the indicator shows a message asking a gateway admin to grant it. Re-login does not fix this case.
 - **Refresh triggers:** session start, after each agent turn, after a rewritten budget or throttling error, and the manual `/actsis-litellm:budget` command.
-- **API-key credentials:** Query the key's own spend/limits via `/key/info`. SSO credentials: user-level spend via `/user/info` (no per-key TPM/RPM limits are shown).
+- **API-key credentials:** Query the key's own spend/limits via `/key/info`. OAuth credentials: user-level spend via `/user/info` (no per-key TPM/RPM limits are shown).
+
+## Per-model usage (`/actsis-litellm:usage`)
+
+Shows spend, tokens, and request counts aggregated per model via the proxy's `GET /user/daily/activity` endpoint (daily spend/usage with a per-model breakdown).
+
+```
+Usage 2025-02-26 → 2025-03-27 (30 days): spend $1.2345, 89000 tokens, 210 requests
+  gpt-x     $0.9800  61000 tok  130 reqs
+  claude-y  $0.2545  28000 tok  80 reqs
+```
+
+- **Arguments:** nothing → last 30 days inclusive; `14` → last N days; `2025-03-01 .. 2025-03-31` (also `to`, `,`, `→` as separators).
+- **Data source:** `GET {gateway}/user/daily/activity?start_date=<start>&end_date=<end>`; totals come from the endpoint's `metadata` when present, otherwise from summing the daily rows; per-model rows aggregate `results[].breakdown.models` across days, sorted by spend descending.
+- **Caveat:** LiteLLM only calculates spend for OpenAI-compatible `/v1/chat/completions` traffic; `/v1/messages` (Anthropic format), passthrough, and unlogged requests report zero or are absent.
+- **Permission errors:** `401` maps to "run /login again"; `403` means the credential lacks the spend/usage routes permission (admin action, re-login does not fix it).
 
 When a request fails, LiteLLM budget and rate-limit errors are rewritten into actionable messages:
 

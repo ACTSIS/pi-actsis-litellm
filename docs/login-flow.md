@@ -18,8 +18,8 @@ sequenceDiagram
     alt URL is not already configured
         U-->>PI: Enter gateway URL
     end
-    PI->>U: Choose sign-in method: SSO or API key
-    alt User chooses SSO
+    PI->>U: Choose sign-in method: OAuth or API key
+    alt User chooses OAuth
         PI->>GW: GET /.well-known/litellm-cli-auth
         GW-->>PI: Discovery document (authorize, token, register, revoke)
         PI->>PI: Generate PKCE code_verifier + code_challenge (S256) + state
@@ -45,15 +45,15 @@ sequenceDiagram
     PI->>PI: Persist via pi credential store (~/.pi/agent/auth.json)
     PI-->>U: Login complete
 
-    Note over PI,GW: SSO refresh: access token renewed using refresh_token;<br/>new refresh_token rotated and persisted automatically.<br/>API key: no refresh; synthetic credential is long-lived.
-    Note over PI,GW: Logout: POST revoke endpoint with refresh_token for SSO;<br/>API key mode skips revocation. Local credentials are cleared.
+    Note over PI,GW: OAuth refresh: access token renewed using refresh_token;<br/>new refresh_token rotated and persisted automatically.<br/>API key: no refresh; synthetic credential is long-lived.
+    Note over PI,GW: Logout: POST revoke endpoint with refresh_token for OAuth;<br/>API key mode skips revocation. Local credentials are cleared.
 ```
 
 ## Step-by-step explanation
 
 1. **URL prompt (if needed)** — When no gateway URL is known from environment, config file, or a previous credential, `/login` asks for the gateway base URL first.
-2. **Method selector** — The user chooses **SSO (browser)** or **API key**.
-3. **SSO path only:**
+2. **Method selector** — The user chooses **OAuth (browser)** or **API key**.
+3. **OAuth path only:**
    - **Discovery** — The extension fetches `/.well-known/litellm-cli-auth` to learn the OAuth endpoints.
    - **Scheme adaptation (discovery only)** — If the gateway advertises `http://` endpoints while the configured URL is `https://` on the same host and port, the extension upgrades the announced endpoints to `https://` (never the reverse) and notifies: "Gateway advertises http:// endpoints; using https:// (scheme upgrade applied)." Endpoints on any other origin are rejected. Runtime calls after login always use the gateway URL exactly as the user configured it, including its scheme.
    - **Dynamic client registration** — A public, loopback-only client is registered on demand. No client secret is involved.
@@ -66,8 +66,8 @@ sequenceDiagram
    - The extension validates the key with `GET {gateway}/v1/models`.
    - On success it stores a synthetic, long-lived OAuth credential (`authMode: api_key`) with a 10-year expiry so pi treats it like any other credential. The credential records `tokenEndpoint: {gateway}/token`, which is how the stored gateway URL is later recovered for runtime configuration.
 5. **Credential storage** — Tokens are passed to pi's native credential store (`~/.pi/agent/auth.json`); the extension does not write credentials to its own files.
-6. **Refresh rotation** — For SSO, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials immediately. The stored access-token expiry is set to `now + max(expires_in - 300, 60)` seconds, so renewal starts before the real expiry. API key credentials never refresh; refreshing one returns an unchanged copy.
-7. **Logout** — `/actsis-litellm:logout` calls the revoke endpoint with the current `refresh_token` for SSO, clears the pi credential entry, and removes the model-catalog cache. API key mode skips remote revocation because there is no refresh token.
+6. **Refresh rotation** — For OAuth credentials, every access-token renewal returns a new `refresh_token`; the extension updates the stored credentials immediately. The stored access-token expiry is set to `now + max(expires_in - 300, 60)` seconds, so renewal starts before the real expiry. API key credentials never refresh; refreshing one returns an unchanged copy.
+7. **Logout** — `/actsis-litellm:logout` calls the revoke endpoint with the current `refresh_token` for OAuth credentials, clears the pi credential entry, and removes the model-catalog cache. API key mode skips remote revocation because there is no refresh token.
 
 ## Security notes
 
