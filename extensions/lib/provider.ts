@@ -146,7 +146,7 @@ async function selectLoginMethod(
   const method = await callbacks.onSelect({
     message: "Sign in to the LiteLLM gateway:",
     options: [
-      { id: "sso", label: "Sign in with SSO (browser)" },
+      { id: "sso", label: "Sign in with OAuth (browser)" },
       { id: "api_key", label: "Use an API key" },
     ],
   });
@@ -219,7 +219,7 @@ export async function buildProviderConfig(
   const initialModels = cached ?? [];
 
   const oauth = {
-    name: "Actsis LiteLLM (SSO)",
+    name: "Actsis LiteLLM (OAuth)",
     async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
       const config = await resolveInteractiveConfig(callbacks, providerId);
       let schemeUpgraded = false;
