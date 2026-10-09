@@ -153,3 +153,19 @@ Approved decisions (user, 2026-09-22):
   `git worktree remove` against a worktree holding the session's only checkout
   without verifying `git worktree list` semantics; treat `~` admin entries as
   real repo bindings, not cosmetic noise.
+- 2026-10-09 (RDD round 1, lineage review-eb5f82c9a0e9555d on pre-rebase local
+  history): CRITICAL R3-001 deterministic (metadata totals only inside results
+  loop) -> fixed (per-field metadata override + row-sum fallback, regression
+  tests). Correction-plan capture blocked inconsistently; superseded by round 2.
+- 2026-10-09 (RDD round 2, lineage review-1af613d382138534): APPROVED over the
+  corrected candidate; acknowledgement burned. Advisory only (informational):
+  WARNING commands.ts:378-381 + 3 SUGGESTIONs. Delivery: ordinary policy.
+- 2026-10-09 (T18 delivery): Issue #1 (status:approved) + PR #2 (type:feature,
+  Closes #1). Push initially rejected: remote history had been rewritten
+  (unrelated roots); rebased feature commits onto rewritten main @ a6e377b.
+  Local-only env dependency found: refreshModels resolved gateway URL from
+  ambient auth.json/config instead of build-time baseUrl -> fixed (b0119c7);
+  masked on dev machines by stored credentials, failed on CI fresh runner
+  (catalog tests saveCount 0 !== 1). New CI workflow (npm ci + typecheck +
+  test, tsx pinned devDependency, node 22): test:SUCCESS on PR #2, then
+  rebase-merged to main @ b0119c7, remote branch deleted, suite 220/220 on main.
