@@ -263,6 +263,71 @@ export async function fetchModelUsage(
   return toSummary(effectiveRange, totalsAgg, perModel);
 }
 
+/**
+ * Maps LiteLLM spend-log model keys (internal deployment names like
+ * "openai/glm-5.3-flash") to the public catalog ids users know ("oc/glm-5.3-flash").
+ * Exact public ids pass through (no entry); unknown keys are left untouched.
+ * Ambiguous suffixes resolve deterministically to the sorted-first public id.
+ */
+export function mapModelAliases(
+  modelKeys: string[],
+  publicIds: string[],
+): Map<string, string> {
+  const aliases = new Map<string, string>();
+  const publicSet = new Set(publicIds);
+
+  const suffixIndex = new Map<string, string>();
+  for (const id of [...publicIds].sort()) {
+    const suffix = id.split("/").pop()!.toLowerCase();
+    if (!suffixIndex.has(suffix)) suffixIndex.set(suffix, id);
+  }
+
+  for (const key of modelKeys) {
+    if (!key || publicSet.has(key)) continue;
+    const normalized = key.split("/").pop()!.toLowerCase();
+    const publicId = suffixIndex.get(normalized);
+    if (publicId) aliases.set(key, publicId);
+  }
+  return aliases;
+}
+
+/**
+ * Renames + merges model entries at display time using the alias map.
+ * Totals stay untouched (merging only changes row presentation); the input
+ * is never mutated.
+ */
+export function applyModelAliases(
+  summary: ModelUsageSummary,
+  aliases: Map<string, string>,
+): ModelUsageSummary {
+  if (aliases.size === 0) {
+    return { ...summary, models: summary.models.map((m) => ({ ...m })) };
+  }
+
+  const merged = new Map<string, ModelUsageEntry>();
+  for (const entry of summary.models) {
+    const name = aliases.get(entry.model) ?? entry.model;
+    const existing = merged.get(name);
+    if (existing) {
+      existing.spend = (existing.spend ?? 0) + (entry.spend ?? 0);
+      existing.promptTokens = (existing.promptTokens ?? 0) + (entry.promptTokens ?? 0);
+      existing.completionTokens =
+        (existing.completionTokens ?? 0) + (entry.completionTokens ?? 0);
+      existing.totalTokens = (existing.totalTokens ?? 0) + (entry.totalTokens ?? 0);
+      existing.apiRequests = (existing.apiRequests ?? 0) + (entry.apiRequests ?? 0);
+    } else {
+      merged.set(name, { ...entry, model: name });
+    }
+  }
+
+  return {
+    ...summary,
+    models: [...merged.values()].sort(
+      (a, b) => (b.spend ?? 0) - (a.spend ?? 0) || a.model.localeCompare(b.model),
+    ),
+  };
+}
+
 /** Number of seconds between two YYYY-MM-DD strings (inclusive length). */
 export function rangeLengthDays(range: UsageRange): number {
   const start = parseIsoDayOrNull(range.startDate);
