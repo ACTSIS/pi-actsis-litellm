@@ -165,11 +165,13 @@ in the Integrations group:
 Integrations
   Budget ▰▰▰▰▰▰▱▱ 78% · $466.32/$600.00
   Top models (7d) · $43.90
-  ▸ oc/glm-5.3-flash $34.59
-  ▸ oc/deepseek-v4.1-flash $7.12
+  oc/glm-5.3-flash        $34.59   79% ▰▰▰▰▰▰▱▱
+  oc/deepseek-v4.1-flash   $7.12   16% ▰▱▱▱▱▱▱▱
   ...
   pi-actsis-litellm · ready
 ```
+
+Each row's gauge shows the model's share of the window total, in the same 8-cell style as the Budget gauge.
 
 Refreshed on the same triggers as the budget indicator (session start, after
 each agent turn, after a rewritten budget error, and manual
