@@ -168,6 +168,12 @@ Approved decisions (user, 2026-09-22):
       order, legacy keys cleared.
 ## Evidence log
 
+- 2026-10-09 (T27 delivery): Issue #17 + PR #18 (type:bug) merged rebase
+  @ eed5182; top-5 rows tabulated to the user's sample layout: "=" separator
+  under the title, name/spend/%/gauge columns aligned, keys re-keyed
+  (top/top0/top1..5), legacy keys cleared. 3+ updated tests, suite 276/276,
+  CI green.
+
 - 2026-10-09 (T26 delivery): Issue #15 + PR #16 (type:bug) merged rebase
   @ 8f0a6f3. Dashboard parity: aggregated endpoint primary (query-scoped
   totals), user_id scope from stored credential userId, full pagination walk
