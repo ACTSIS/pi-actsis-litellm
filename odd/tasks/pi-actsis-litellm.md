@@ -142,6 +142,12 @@ Approved decisions (user, 2026-09-22):
       manual /budget) with a 5-minute TTL, public aliasing like /usage,
       fail-silent (clears the block on error/data-less states).
 
+- [x] T24. Top-5 below the Budget in the status panel (user feedback: the
+      belowEditor footer block is the wrong spot). The budget renders via
+      ctx.ui.setStatus("actsis-litellm:budget", ...) and Gentle Shell renders
+      each status entry as one Integrations line (sorted by key). Replace the
+      footer block with status rows: title entry + one entry per model row,
+      keys sorting right after the budget key; drop the belowEditor block.
 ## Evidence log
 
 - 2026-10-09 (T22/T23 delivery): Issue #9 + PR #10 (type:feature) merged rebase
