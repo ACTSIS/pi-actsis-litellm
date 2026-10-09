@@ -146,6 +146,7 @@ Usage 2025-02-26 → 2025-03-27 (30 days): spend $1.2345, 89000 tokens, 210 requ
 ```
 
 - **Arguments:** nothing → last 30 days inclusive; `14` → last N days; `2025-03-01 .. 2025-03-31` (also `to`, `,`, `→` as separators).
+- **Public model names:** LiteLLM spend logs record the internal deployment name (e.g. `openai/glm-5.3-flash`); `/usage` maps them to the public catalog ids you see in the gateway (`oc/glm-5.3-flash`) by shared suffix, merging entries that alias to the same public model. Keys with no public chat alias (e.g. embedding models) keep their internal name.
 - **Data source:** `GET {gateway}/user/daily/activity?start_date=<start>&end_date=<end>`; totals come from the endpoint's `metadata` when present, otherwise from summing the daily rows; per-model rows aggregate `results[].breakdown.models` across days, sorted by spend descending.
 - **Caveat:** LiteLLM only calculates spend for OpenAI-compatible `/v1/chat/completions` traffic; `/v1/messages` (Anthropic format), passthrough, and unlogged requests report zero or are absent.
 - **Permission errors:** `401` maps to "run /login again"; `403` means the credential lacks the spend/usage routes permission (admin action, re-login does not fix it).
