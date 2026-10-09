@@ -10,6 +10,7 @@ import {
   extractUsableApiKey,
   type CommandDeps,
 } from "../extensions/lib/commands.ts";
+import { readStoredCredentialUserId } from "../extensions/lib/gateway-url.ts";
 
 function makeMockRegistry(overrides: Record<string, unknown> = {}): ModelRegistry {
   const base: Record<string, unknown> = {
@@ -114,10 +115,18 @@ describe("actsis-litellm:usage credential wiring", () => {
           access: "stored-access",
           refresh: "stored-refresh",
           expires: Date.now() + 3_600_000,
+          userId: "u-1234",
           gatewayUrl: "https://gateway.example.com",
           tokenEndpoint: "https://gateway.example.com/token",
           revocationEndpoint: "https://gateway.example.com/revoke",
           resource: "https://gateway.example.com",
+        },
+        "other": {
+          type: "oauth",
+          access: "other-access",
+          refresh: "other-refresh",
+          expires: Date.now() + 3_600_000,
+          tokenEndpoint: "https://other.example.com/token",
         },
       }),
       "utf8",
@@ -205,5 +214,20 @@ describe("actsis-litellm:usage credential wiring", () => {
     assert.equal(ctx.notifications.length, 1);
     assert.equal(ctx.notifications[0].level, "warning");
     assert.match(ctx.notifications[0].message, /No usable credential/);
+  });
+
+  describe("readStoredCredentialUserId", () => {
+    it("reads userId from the stored credential entry", async () => {
+      const uid = await readStoredCredentialUserId(deps.authPath, "actsis-litellm");
+      assert.equal(uid, "u-1234");
+    });
+
+    it("returns null when missing or for another provider", async () => {
+      assert.equal(await readStoredCredentialUserId(deps.authPath, "other"), null);
+      assert.equal(
+        await readStoredCredentialUserId(path.join(home, "missing-auth.json"), "actsis-litellm"),
+        null,
+      );
+    });
   });
 });

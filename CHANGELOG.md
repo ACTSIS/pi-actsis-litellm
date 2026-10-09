@@ -20,6 +20,14 @@
   `ACTSIS_LITELLM_NO_SYSTEM_CA=1`. TLS trust errors now carry concrete Windows
   and Linux remediation steps (`setx NODE_USE_SYSTEM_CA 1`, `certutil -encode`,
   `NODE_EXTRA_CA_CERTS`).
+- **Dashboard-parity usage numbers** — `/usage` and the top-5 widget now query the
+  aggregated `/user/daily/activity/aggregated` endpoint (stable query-scoped totals) with
+  a `user_id` filter from the stored credential, so an admin token reports "Your Usage"
+  instead of org-wide spend (fixes a ~10x mismatch vs the dashboard). Fallback: full
+  pagination walk of `/user/daily/activity` (page_size 200, row sums; the per-page
+  metadata was being mixed with row sums and both are page-scoped). Request counts are
+  reconciled with a `Gateway requests:` footnote from `/gateway/daily/activity` (the
+  dashboard card's source; includes non-logged traffic).
 - **Tabulated /usage + top-5 status rows** — `/actsis-litellm:usage` renders an aligned
   table (Model / Spend / Tokens / Reqs, compact k/M counts, totals row). The shell Status
   panel shows **Top models (7d)** as tabulated status rows directly below the Budget line:

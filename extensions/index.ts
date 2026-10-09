@@ -7,7 +7,7 @@ import {
 } from "./lib/provider.ts";
 import { ConfigError } from "./lib/errors.ts";
 import { resolveConfig } from "./lib/config.ts";
-import { readStoredCredentialGatewayUrl } from "./lib/gateway-url.ts";
+import { readStoredCredentialGatewayUrl, readStoredCredentialUserId } from "./lib/gateway-url.ts";
 import {
   buildStatusHandler,
   buildModelsCommandHandler,
@@ -272,11 +272,13 @@ async function refreshTopModelsWidget(
     });
 
     const range = resolveUsageRangeDays(TOP_MODELS_WINDOW_DAYS, nowMs);
+    const storedUserId = await readStoredCredentialUserId(defaultAuthPath(), providerId);
     const summary = await fetchModelUsage(
       baseUrl,
       apiKey,
       cfg.requestTimeoutMs,
       range,
+      { userId: storedUserId ?? undefined },
     );
     if (summary.models.length === 0 || (summary.totals.spend ?? 0) <= 0) {
       clear();

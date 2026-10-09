@@ -8,6 +8,7 @@ import { resolveConfig, type ActsisEnabledConfig } from "./config.ts";
 import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
 import {
   applyModelAliases,
+  fetchGatewayRequests,
   fetchModelUsage,
   formatUsageTable,
   isoDay,
@@ -22,7 +23,7 @@ import { loadCachedModels, computeCacheAge } from "./catalog.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { LiteLLMExtensionState } from "../index.ts";
 
-import { readStoredCredentialGatewayUrl } from "./gateway-url.ts";
+import { readStoredCredentialGatewayUrl, readStoredCredentialUserId } from "./gateway-url.ts";
 
 const DEFAULT_PROVIDER_ID = "actsis-litellm";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -453,11 +454,13 @@ export function buildUsageHandler(deps: CommandDeps) {
         notify(ctx, "No usable credential. Run /login first.", "warning");
         return;
       }
+      const userId = (await readStoredCredentialUserId(deps.authPath, providerId)) ?? undefined;
       const summary = await fetchModelUsage(
         cfg.baseUrl,
         apiKey,
         deps.requestTimeoutMs,
         parsed.range,
+        { userId },
       );
       // Present public model names (what the user sees in /model and the
       // gateway UI) instead of LiteLLM's internal deployment names from the
@@ -472,11 +475,27 @@ export function buildUsageHandler(deps: CommandDeps) {
           publicIds,
         ),
       );
-      notify(
-        ctx,
-        `Usage (${parsed.label}):\n${formatUsageTable(display).join("\n")}`,
-        "info",
-      );
+      const lines = [`Usage (${parsed.label}):`, ...formatUsageTable(display)];
+      // The dashboard's Total Requests card counts gateway-answered requests
+      // (includes non-spend-logged traffic, e.g. audio); surface it as a
+      // best-effort footnote so numbers reconcile with the dashboard.
+      try {
+        const gateway = await fetchGatewayRequests(
+          cfg.baseUrl,
+          apiKey,
+          deps.requestTimeoutMs,
+          parsed.range,
+          { userId },
+        );
+        if (gateway) {
+          lines.push(
+            `Gateway requests: ${gateway.total.toLocaleString("en-US")} (successful ${gateway.successful.toLocaleString("en-US")} · failed ${gateway.failed.toLocaleString("en-US")}) — includes non-logged traffic`,
+          );
+        }
+      } catch {
+        // Footnote is best-effort.
+      }
+      notify(ctx, lines.join("\n"), "info");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `actsis-litellm:usage failed: ${message}`, "error");
