@@ -222,33 +222,11 @@ export async function fetchModelUsage(
   const totalsAgg = newAggregator();
   const perModel = new Map<string, MetricsAggregator>();
   const metadata = asRecord(record.metadata);
-  const metadataTotals: MetricsLike = {
-    spend: metadata.total_spend,
-    prompt_tokens: metadata.total_prompt_tokens,
-    completion_tokens: metadata.total_completion_tokens,
-    total_tokens: metadata.total_tokens,
-    api_requests: metadata.total_api_requests,
-  };
-  const hasMetadataTotals = Object.values(metadataTotals).some((v) => v !== null && v !== undefined);
 
   for (const rawRow of results) {
     const row = asRecord(rawRow);
 
-    if (hasMetadataTotals) {
-      // Trust the endpoint's own metadata totals exclusively: they cover rows
-      // outside `results` pagination and avoid double counting.
-      totalsAgg.spend = asNullableNumber(metadataTotals.spend) ?? totalsAgg.spend;
-      totalsAgg.promptTokens =
-        asNullableNumber(metadataTotals.prompt_tokens) ?? totalsAgg.promptTokens;
-      totalsAgg.completionTokens =
-        asNullableNumber(metadataTotals.completion_tokens) ?? totalsAgg.completionTokens;
-      totalsAgg.totalTokens =
-        asNullableNumber(metadataTotals.total_tokens) ?? totalsAgg.totalTokens;
-      totalsAgg.apiRequests =
-        asNullableNumber(metadataTotals.api_requests) ?? totalsAgg.apiRequests;
-    } else {
-      accumulate(totalsAgg, readMetrics(row));
-    }
+    accumulate(totalsAgg, readMetrics(row));
 
     const breakdown = asRecord(row.breakdown);
     const models = asRecord(breakdown.models);
@@ -257,6 +235,22 @@ export async function fetchModelUsage(
       accumulate(agg, readMetrics(asRecord(rawMetrics)));
       perModel.set(model, agg);
     }
+  }
+
+  // Apply the endpoint's own metadata totals per field, falling back to the
+  // summed row metrics for any missing key. This covers pages where rows are
+  // empty or partial while metadata carries the authoritative totals (and
+  // avoids double counting rows outside the `results` pagination window).
+  const metadataFields: Array<[keyof MetricsAggregator, unknown]> = [
+    ["spend", metadata.total_spend],
+    ["promptTokens", metadata.total_prompt_tokens],
+    ["completionTokens", metadata.total_completion_tokens],
+    ["totalTokens", metadata.total_tokens],
+    ["apiRequests", metadata.total_api_requests],
+  ];
+  for (const [field, value] of metadataFields) {
+    const n = asNullableNumber(value);
+    if (n !== null) totalsAgg[field] = n;
   }
 
   // Floor: the per-model breakdown is the minimum credible spend even when
