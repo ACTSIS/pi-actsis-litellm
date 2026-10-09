@@ -120,6 +120,12 @@ Approved decisions (user, 2026-09-22):
       (test/tls-config.test.ts); improves the TLS hint error message with explicit
       Windows steps (setx NODE_USE_SYSTEM_CA 1).
 
+- [x] T20. Credential resolution for /usage (and /status budget line): use
+      AuthResult.auth.apiKey (pi auth resolution, commit 23d3f5d precedent in
+      the budget widget) via extractUsableApiKey, falling back to the oauth
+      credential access; the current /usage only checks authResult.credential
+      (nonexistent field) so any valid login reports "No usable credential".
+
 ## Evidence log
 
 - 2026-09-24: T15 internal-reference sanitation. A full-history audit found

@@ -132,6 +132,33 @@ function discoveryFromCredential(credential: OAuthCredential): CliAuthDiscovery 
   return storedToDiscovery(credential);
 }
 
+/**
+ * Extracts the bearer token for gateway REST calls from the pi auth
+ * resolution (`getProviderAuth` -> AuthResult). The resolved key lives in
+ * `auth.apiKey` and covers both OAuth and API-key credentials; the direct
+ * credential fields are fallbacks for extension-compat shapes.
+ */
+export function extractUsableApiKey(authResult: unknown): string | null {
+  if (!authResult || typeof authResult !== "object") return null;
+  const record = authResult as Record<string, unknown>;
+
+  const authObj = record.auth;
+  if (authObj && typeof authObj === "object") {
+    const apiKey = (authObj as { apiKey?: unknown }).apiKey;
+    if (typeof apiKey === "string" && apiKey) return apiKey;
+  }
+
+  const oauthCredential = extractOAuthCredential(authResult as AuthResult);
+  if (oauthCredential && typeof oauthCredential.access === "string" && oauthCredential.access) {
+    return oauthCredential.access;
+  }
+
+  const rawAccess = record.access;
+  if (typeof rawAccess === "string" && rawAccess) return rawAccess;
+
+  return null;
+}
+
 function notify(
   ctx: ExtensionCommandContext,
   message: string,
@@ -192,10 +219,13 @@ export function buildStatusHandler(deps: CommandDeps) {
 
       let budgetLine: string | null = null;
       try {
-        if (oauthCredential) {
+        // Same resolution as the budget widget: AuthResult.auth.apiKey covers
+        // OAuth and API-key credentials; the oauth credential is a fallback.
+        const apiKey = extractUsableApiKey(authResult);
+        if (apiKey) {
           const info = await fetchBudgetInfo(
             cfg.baseUrl,
-            oauthCredential.access,
+            apiKey,
             deps.requestTimeoutMs,
           );
           const line = formatBudgetLine(info);
@@ -416,14 +446,14 @@ export function buildUsageHandler(deps: CommandDeps) {
         return;
       }
       const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
-      const oauthCredential = extractOAuthCredential(authResult);
-      if (!oauthCredential || typeof oauthCredential.access !== "string") {
+      const apiKey = extractUsableApiKey(authResult);
+      if (!apiKey) {
         notify(ctx, "No usable credential. Run /login first.", "warning");
         return;
       }
       const summary = await fetchModelUsage(
         cfg.baseUrl,
-        oauthCredential.access,
+        apiKey,
         deps.requestTimeoutMs,
         parsed.range,
       );
