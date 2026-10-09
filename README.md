@@ -166,8 +166,9 @@ in the Integrations group:
 Integrations
   Budget ▰▰▰▰▰▰▱▱ 78% · $466.32/$600.00
   Top models (7d) · $43.90
-  oc/glm-5.3-flash        $34.59   79% ▰▰▰▰▰▰▱▱
-  oc/deepseek-v4.1-flash   $7.12   16% ▰▱▱▱▱▱▱▱
+  =========================================
+  oc/glm-5.3-flash        $34.59  79% ▰▰▰▰▰▰▱▱
+  oc/deepseek-v4.1-flash   $7.12  16% ▰▱▱▱▱▱▱▱
   ...
   pi-actsis-litellm · ready
 ```

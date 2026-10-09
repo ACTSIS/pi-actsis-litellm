@@ -736,16 +736,21 @@ export function buildTopModelsStatusEntries(options: {
       : `Top models (${options.windowLabel})`;
 
   const nameWidth = Math.max(0, ...rows.map((r) => r.model.length));
-  const spendWidth = 7; // "$999.99"
-  const pctWidth = 5; // "100%"
+  const spendWidth = Math.max("$0.00".length, ...rows.map((r) => `$${(r.spend ?? 0).toFixed(2)}`.length));
+  const pctWidth = 3; // right-aligned "60%" / " 2%"
+  const GAUGE_CELLS = 8;
+  const tableWidth = nameWidth + 1 + spendWidth + 1 + pctWidth + 1 + GAUGE_CELLS;
 
   const entries: TopModelsStatusEntry[] = [{ key: prefix, text: titleText }];
+  // "=" rule under the title, like the /usage table separators. Keyed "top0"
+  // so it sorts between the title ("top") and the rows ("top1".."top5").
+  entries.push({ key: `${prefix}0`, text: "=".repeat(tableWidth) });
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const spendValue = row.spend ?? 0;
     const share = windowTotal > 0 ? Math.min(100, Math.max(0, (spendValue / windowTotal) * 100)) : 0;
-    const text = `${row.model.padEnd(nameWidth)} ${`$${spendValue.toFixed(2)}`.padStart(spendWidth)} ${String(Math.round(share)).padStart(pctWidth - 1)}% ${usageGauge(share)}`;
-    entries.push({ key: `${prefix}-${i + 1}`, text });
+    const text = `${row.model.padEnd(nameWidth)} ${`$${spendValue.toFixed(2)}`.padStart(spendWidth)} ${String(Math.round(share)).padStart(pctWidth)}% ${usageGauge(share)}`;
+    entries.push({ key: `${prefix}${i + 1}`, text });
   }
   return entries;
 }

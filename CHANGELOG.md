@@ -32,8 +32,8 @@
   table (Model / Spend / Tokens / Reqs, compact k/M counts, totals row). The shell Status
   panel shows **Top models (7d)** as tabulated status rows directly below the Budget line:
   padded model names, right-aligned spend, share percentage, and a budget-style 8-cell
-  gauge per row (top 5 public names, 7-day window, 5-min TTL, same triggers as the budget
-  widget, hidden when empty).
+  gauge per row, with an `=` separator under the title (top 5 public names, 7-day window,
+  5-min TTL, same triggers as the budget widget, hidden when empty).
 - **Per-model usage command** — `/actsis-litellm:usage` reports spend, tokens, and request
   counts aggregated per model via `GET /user/daily/activity`. Args: nothing (last 30 days),
   a day count (`14`), or an inclusive range (`2025-03-01 .. 2025-03-31`, also `to`/`,`/`→`).
