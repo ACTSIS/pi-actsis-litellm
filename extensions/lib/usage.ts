@@ -227,6 +227,33 @@ export async function fetchModelUsage(
     const row = asRecord(rawRow);
 
     accumulate(totalsAgg, readMetrics(row));
+
+    const breakdown = asRecord(row.breakdown);
+    const models = asRecord(breakdown.models);
+    for (const [model, rawMetrics] of Object.entries(models)) {
+      const agg = perModel.get(model) ?? newAggregator();
+      accumulate(agg, readMetrics(asRecord(rawMetrics)));
+      perModel.set(model, agg);
+    }
+  }
+
+  // Apply the endpoint's own metadata totals per field, falling back to the
+  // summed row metrics for any missing key. This covers pages where rows are
+  // empty or partial while metadata carries the authoritative totals (and
+  // avoids double counting rows outside the `results` pagination window).
+  const metadataFields: Array<[keyof MetricsAggregator, unknown]> = [
+    ["spend", metadata.total_spend],
+    ["promptTokens", metadata.total_prompt_tokens],
+    ["completionTokens", metadata.total_completion_tokens],
+    ["totalTokens", metadata.total_tokens],
+    ["apiRequests", metadata.total_api_requests],
+  ];
+  for (const [field, value] of metadataFields) {
+    const n = asNullableNumber(value);
+    if (n !== null) totalsAgg[field] = n;
+  }
+
+  // Floor: the per-model breakdown is the minimum credible spend even when
   // metadata totals look stale or partially populated.
   const modelSpendSum = [...perModel.values()].reduce((sum, m) => sum + m.spend, 0);
   if (perModel.size > 0 && modelSpendSum > totalsAgg.spend) {
@@ -277,3 +304,5 @@ export function formatUsageLines(summary: ModelUsageSummary): string[] {
   }
   return lines;
 }
+
+
