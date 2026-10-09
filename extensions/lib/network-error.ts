@@ -36,7 +36,7 @@ const HINTS: Hint[] = [
         "ERR_TLS_CERT_ALTNAME_INVALID",
       ].includes(link.code) || link.code.startsWith("ERR_SSL")),
     text:
-      "the gateway's TLS certificate is not trusted by Node; install the issuing CA in the OS trust store and start Node with --use-system-ca (or point NODE_EXTRA_CA_CERTS at the CA bundle).",
+      "the gateway's TLS certificate is not trusted by Node (Node ignores the OS certificate store by default). This extension auto-loads OS system CAs at startup (--use-system-ca equivalent); to opt out set ACTSIS_LITELLM_NO_SYSTEM_CA=1. If trust still fails: on Windows run `setx NODE_USE_SYSTEM_CA 1` (Node ≥ 22.19.0, CA present in certmgr.msc) or export the CA to PEM (`certutil -encode ca.cer ca.pem`) and set NODE_EXTRA_CA_CERTS to it; on Linux use --use-openssl-ca / SSL_CERT_FILE.",
   },
   {
     match: (link) =>
