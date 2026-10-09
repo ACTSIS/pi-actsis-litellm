@@ -21,6 +21,7 @@ import {
   budgetUsagePercent,
 } from "./lib/limit-errors.ts";
 import { fetchBudgetInfo, type BudgetInfo } from "./lib/budget.ts";
+import { configureSystemCa } from "./lib/tls-config.ts";
 
 export interface LiteLLMExtensionState {
   providerId?: string;
@@ -211,6 +212,25 @@ async function createFileLoader(): Promise<
 }
 
 export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
+  // TLS bootstrap FIRST: private-CA gateways must be reachable before any
+  // catalog refresh, login discovery, or chat request fires. Strictly
+  // additive, fail-open, and once per session; opt-out via
+  // ACTSIS_LITELLM_NO_SYSTEM_CA=1. Never blocks or throws.
+  try {
+    // TLS bootstrap BEFORE registration: private-CA gateways must be
+    // reachable before any catalog refresh, login discovery, or chat request
+    // fires. configureSystemCa is strictly additive over Node's bundled CAs
+    // (public HTTPS keeps working), fail-open, and once per session. Opt-out
+    // via ACTSIS_LITELLM_NO_SYSTEM_CA=1. It never rejects; the catch is
+    // belt-and-braces so a TLS problem can never prevent registration.
+    await configureSystemCa({
+      onceKey: "actsis-litellm-extension",
+      optOutEnv: process.env.ACTSIS_LITELLM_NO_SYSTEM_CA,
+    });
+  } catch {
+    // Unreachable today; keep the guard so startup can never depend on TLS.
+  }
+
   // Register commands first; they work independently of provider registration.
   const commandDeps = defaultCommandDeps();
   commandDeps.getState = () => state;
