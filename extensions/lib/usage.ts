@@ -328,12 +328,187 @@ export function applyModelAliases(
   };
 }
 
+/** Compact human-readable token count; null renders as dash. */
+export function formatCompactTokens(tokens: number | null | undefined): string {
+  if (tokens === null || tokens === undefined) return "-";
+  if (tokens >= 1e9) return `${(tokens / 1e9).toFixed(2)}B`;
+  if (tokens >= 1e6) {
+    const millions = tokens / 1e6;
+    return `${millions.toFixed(millions < 10 ? 2 : 1)}M`;
+  }
+  if (tokens >= 1e3) return `${(tokens / 1e3).toFixed(1)}k`;
+  return String(tokens);
+}
+
+export function resolveUsageRangeDays(days: number, nowMs?: number): UsageRange {
+  const now = typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now();
+  const clamped = Math.max(1, Math.floor(days));
+  const endDate = isoDay(now);
+  const startDate = isoDay(now - (clamped - 1) * DAY_MS);
+  return { startDate, endDate };
+}
+
 /** Number of seconds between two YYYY-MM-DD strings (inclusive length). */
 export function rangeLengthDays(range: UsageRange): number {
   const start = parseIsoDayOrNull(range.startDate);
   const end = parseIsoDayOrNull(range.endDate);
   if (start === null || end === null) return 0;
   return Math.round((end - start) / DAY_MS) + 1;
+}
+
+interface TableTotalsLike {
+  totalTokens?: number | null;
+  totalApiRequests?: number | null;
+}
+
+function buildTable(
+  entries: ModelUsageEntry[],
+  totalsSpend: number,
+  totals: TableTotalsLike,
+): string[] {
+  const names = entries.map((e) => e.model);
+  const nameWidth = Math.max("Model".length, ...names.map((n) => n.length));
+  const spendWidth = Math.max(
+    "Spend".length,
+    ...entries.map((e) => (e.spend === null ? "-" : `$${e.spend.toFixed(4)}`).length),
+    `$${totalsSpend.toFixed(4)}`.length,
+  );
+  const tokenWidth = Math.max(
+    "Tokens".length,
+    ...entries.map((e) => formatCompactTokens(e.totalTokens).length),
+    formatCompactTokens(totals.totalTokens ?? null).length,
+  );
+  const reqWidth = Math.max(
+    "Reqs".length,
+    ...entries.map((e) => (e.apiRequests === null ? "-" : String(e.apiRequests)).length),
+    String(totals.totalApiRequests ?? 0).length,
+  );
+
+  const renderRow = (model: string, spend: string, tokens: string, reqs: string): string =>
+    `${model.padEnd(nameWidth)}  ${spend.padStart(spendWidth)}  ${tokens.padStart(tokenWidth)}  ${reqs.padStart(reqWidth)}`;
+
+  const lines: string[] = [];
+  const separator = "-".repeat(
+    nameWidth + spendWidth + tokenWidth + reqWidth + 6,
+  );
+  lines.push(renderRow("Model", "Spend", "Tokens", "Reqs"));
+  lines.push(separator);
+  for (const entry of entries) {
+    lines.push(
+      renderRow(
+        entry.model,
+        entry.spend === null ? "-" : `$${entry.spend.toFixed(4)}`,
+        formatCompactTokens(entry.totalTokens),
+        entry.apiRequests === null ? "-" : String(entry.apiRequests),
+      ),
+    );
+  }
+  if (entries.length > 0) {
+    lines.push(separator);
+    lines.push(
+      renderRow(
+        "Total",
+        `$${totalsSpend.toFixed(4)}`,
+        formatCompactTokens(totals.totalTokens ?? null),
+        String(totals.totalApiRequests ?? 0),
+      ),
+    );
+  }
+  return lines;
+}
+
+export interface FormatUsageTableOptions {
+  /** Truncate the model rows to the top N by spend (totals row unaffected). */
+  topN?: number;
+}
+
+/**
+ * Renders the summary as an aligned fixed-width table with a totals row.
+ * Token counts are compacted (k/M/B) to keep the table narrow.
+ */
+export function formatUsageTable(
+  summary: ModelUsageSummary,
+  options: FormatUsageTableOptions = {},
+): string[] {
+  const lines: string[] = [];
+  const totalSpend = summary.totals.spend ?? 0;
+  const header = `Usage ${summary.startDate} → ${summary.endDate} (${rangeLengthDays(summary)} days): $${totalSpend.toFixed(4)}`;
+  lines.push(header);
+  if (summary.models.length === 0) {
+    lines.push("(no logged model usage in this range)");
+    return lines;
+  }
+  const topN = typeof options.topN === "number" && options.topN > 0 ? options.topN : undefined;
+  const rows = topN !== undefined ? summary.models.slice(0, topN) : summary.models;
+  lines.push(...buildTable(rows, totalSpend, {
+    totalTokens: summary.totals.totalTokens,
+    totalApiRequests: summary.totals.apiRequests,
+  }));
+  if (topN !== undefined && summary.models.length > topN) {
+    // The more-note sits just above the totals footer.
+    lines.splice(lines.length - 1, 0, `(+${summary.models.length - topN} more models)`);
+  }
+  return lines;
+}
+
+export interface TopModelsBlockOptions {
+  /** Label shown in the block title, e.g. "7d". */
+  windowLabel: string;
+  /** Pre-sorted (spend desc) rows; only the top 5 are rendered. */
+  rows: Array<{ model: string; spend: number | null }>;
+  /** Total tokens for the footer row; omit to hide the footer. */
+  totalTokens?: number | null;
+  /** Max model-name width before ellipsis truncation. */
+  maxNameWidth?: number;
+}
+
+const TOP_MODELS_ROW_LIMIT = 5;
+
+/**
+ * Renders the compact boxed top-5 block shown in the TUI widgets below the
+ * budget indicator. Single-width box drawing; rows are padded to a uniform
+ * content width so the box stays square.
+ */
+export function buildTopModelsBlock(options: TopModelsBlockOptions): string[] {
+  const maxNameWidth = options.maxNameWidth ?? 26;
+  const rows = options.rows
+    .slice(0, TOP_MODELS_ROW_LIMIT)
+    .map((row) => ({
+      model:
+        row.model.length > maxNameWidth
+          ? `${row.model.slice(0, maxNameWidth - 1)}…`
+          : row.model,
+      spend: row.spend,
+    }));
+
+  const title = ` Top models (${options.windowLabel}) `;
+  const nameWidth = Math.max(
+    ...(rows.length > 0 ? rows.map((r) => r.model.length) : [0]),
+  );
+  const spendWidth = 7; // "$999.99"
+  const textWidth = nameWidth + 2 + spendWidth;
+  const contentWidth = Math.max(title.length, textWidth) + 4;
+  const border = (left: string, right: string, body: string): string =>
+    `${left}${body.repeat(Math.max(0, contentWidth - 2))}${right}`;
+  const content = (text: string): string =>
+    `│ ${text.padEnd(contentWidth - 4)} │`;
+
+  const lines: string[] = [];
+  const borderBody = "─".repeat(Math.max(0, contentWidth - 2));
+  lines.push(`┌${title.padEnd(contentWidth - 2, "─")}┐`);
+  if (rows.length === 0) {
+    lines.push(content("(no usage)"));
+  } else {
+    for (const row of rows) {
+      lines.push(
+        content(
+          `${row.model.padEnd(nameWidth)}  ${`$${(row.spend ?? 0).toFixed(2)}`.padStart(spendWidth)}`,
+        ),
+      );
+    }
+  }
+  lines.push(border("└", "┘", "─"));
+  return lines;
 }
 
 /** Formats one model row, e.g. `gpt-x  $0.0200  460 tok  5 reqs`. */
