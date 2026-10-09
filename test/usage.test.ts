@@ -567,9 +567,9 @@ describe("buildTopModelsStatusEntries", () => {
 
   it("builds a title entry plus one status row per model (capped at 5)", () => {
     const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows });
-    assert.equal(entries.length, 6); // title + 5 rows
+    assert.equal(entries.length, 7); // title + separator + 5 rows
     assert.match(entries[0].text, /Top models \(7d\)/);
-    assert.match(entries[1].text, /oc\/glm-5\.3-flash\s+\$34\.59/);
+    assert.match(entries[2].text, /oc\/glm-5\.3-flash\s+\$34\.59/);
     assert.ok(!entries.some((e) => e.text.includes("sixth-model")));
   });
 
@@ -588,7 +588,7 @@ describe("buildTopModelsStatusEntries", () => {
       windowLabel: "7d",
       rows: [{ model: "m", spend: null }],
     });
-    assert.match(entries[1].text, /m\s+\$0\.00\s+0%/);
+    assert.match(entries[2].text, /m\s+\$0\.00\s+0%/);
     assert.ok(!entries[0].text.includes("$"));
   });
 
@@ -608,7 +608,7 @@ describe("buildTopModelsStatusEntries (table + gauge)", () => {
 
   it("aligns model names and spends across rows", () => {
     const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 43.9 });
-    const dataRows = entries.slice(1);
+    const dataRows = entries.slice(2); // title + separator first
     // Tabular: the spend column starts at the same column in every row, and
     // so does the percentage/gauge tail.
     // Spend is right-aligned: the end of the $xx.xx token is the same column.
@@ -624,10 +624,10 @@ describe("buildTopModelsStatusEntries (table + gauge)", () => {
 
   it("adds a budget-style gauge with the share of the window total", () => {
     const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 43.9 });
-    const top = entries[1].text;
+    const top = entries[2].text; // title + separator first
     // 34.59 / 43.9 = 78.8% -> "79%" and mostly filled gauge.
     assert.match(top, /79% [\u25b0\u25b1]*$/);
-    const gauges = entries.slice(1).map((e) => {
+    const gauges = entries.slice(2).map((e) => {
       const gauge = e.text.match(/([▰▱]+)$/);
       return gauge ? gauge[1] : "";
     });
@@ -646,11 +646,11 @@ describe("buildTopModelsStatusEntries (table + gauge)", () => {
       ],
       totalSpend: 10.0,
     });
-    const top = entries[1].text;
+    const top = entries[2].text; // title + separator first
     assert.match(top, /100%/);
     const gauge = [...top].filter((c) => "▰".includes(c)).length;
     assert.equal(gauge, 8);
-    const residual = entries[2].text;
+    const residual = entries[3].text;
     assert.match(residual, /\s0%/);
   });
 
@@ -800,4 +800,53 @@ describe("fetchGatewayRequests (top-level totals shape)", () => {
       recorder.restore();
     }
   });
+});
+
+describe("buildTopModelsStatusEntries (tabulated rows)", () => {
+  const rows = [
+    { model: "oc/glm-5.3-flash", spend: 67.0 },
+    { model: "oc/glm-5.3", spend: 30.94 },
+    { model: "oc/deepseek-v4.1-flash", spend: 11.59 },
+    { model: "oc/minimax-m3", spend: 2.31 },
+    { model: "oc/kimi-k2.7-code", spend: 0.33 },
+  ];
+
+  it("adds an = separator entry right under the title", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 112.48 });
+    assert.equal(entries[1].key.endsWith("0"), true);
+    assert.match(entries[1].text, /^=+$/);
+    assert.ok(entries[1].text.length >= 30);
+  });
+
+  it("re-keys entries so sort order is title, separator, row-1..5", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 112.48 });
+    const keys = entries.map((e) => e.key);
+    const sorted = [...keys].sort((a, b) => a.localeCompare(b));
+    assert.deepEqual(keys, sorted);
+    assert.ok(keys[0].endsWith("top"));
+    assert.ok(keys[1].endsWith("top0"));
+    assert.ok(keys[2].endsWith("top1"));
+  });
+
+  it("aligns spend, percentage and gauge columns across rows", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 112.48 });
+    const dataRows = entries.slice(2).map((e) => e.text);
+    // Spend token ends at the same column in every row.
+    const spendEnds = dataRows.map((t) => {
+      const m = t.match(/\$\d+\.\d\d/);
+      return m && m.index !== undefined ? m.index + m[0].length : -1;
+    });
+    assert.equal(new Set(spendEnds).size, 1);
+    // Percentage token ends at the same column (right-aligned).
+    const pctEnds = dataRows.map((t) => {
+      const m = t.match(/(\d+)%/);
+      return m && m.index !== undefined && m.index !== null ? m.index + m[0].length : -1;
+    });
+    assert.equal(new Set(pctEnds).size, 1);
+    // Gauge tails align.
+    assert.ok(dataRows.every((t) => /[▰▱]$/.test(t)));
+    const gaugeEnds = dataRows.map((t) => t.length);
+    assert.equal(new Set(gaugeEnds).size, 1);
+  });
+
 });

@@ -220,10 +220,10 @@ async function refreshTopModelsWidget(
     const staleKeys = [
       TOP_MODELS_LEGACY_WIDGET_KEY,
       ...(topModelsCache?.keys ?? []),
-      ...Array.from(
-        { length: TOP_MODELS_MAX_ROWS + 1 },
-        (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}-${i}`,
-      ).filter((k) => k !== `${TOP_MODELS_STATUS_KEY_PREFIX}-0`),
+      // All key schemes the widget ever used: legacy "...top-N" (pre-gauge),
+      // "...top0..9" (separator + rows) and "...top-N" newer rows.
+      ...Array.from({ length: TOP_MODELS_MAX_ROWS + 3 }, (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}-${i}`),
+      ...Array.from({ length: TOP_MODELS_MAX_ROWS + 3 }, (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}${i}`),
     ];
     for (const key of new Set(staleKeys)) {
       ctx.ui.setStatus?.(key, undefined);

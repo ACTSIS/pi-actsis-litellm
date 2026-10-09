@@ -161,6 +161,11 @@ Approved decisions (user, 2026-09-22):
       metadata when total_pages>1); (d) gateway request counts from
       GET /gateway/daily/activity (the dashboard's Total Requests source;
       daily-activity counts upstream attempts). Test-first.
+- [x] T27. Tabulate the top-5 status rows exactly like the /usage table with
+      an "=" separator under the title (user-provided layout): name padded,
+      right-aligned spend, right-aligned share %, aligned gauge column; entry
+      keys re-keyed (top / top0 separator / top1..5) to keep title-sep-rows
+      order, legacy keys cleared.
 ## Evidence log
 
 - 2026-10-09 (T26 delivery): Issue #15 + PR #16 (type:bug) merged rebase
