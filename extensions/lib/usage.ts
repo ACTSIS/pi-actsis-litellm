@@ -546,3 +546,44 @@ export function formatUsageLines(summary: ModelUsageSummary): string[] {
 }
 
 
+
+export const TOP_MODELS_STATUS_KEY_PREFIX = "actsis-litellm:budget:top";
+
+/**
+ * Builds the ctx.ui.setStatus entries that render the top-models block in the
+ * shell's Status card (Integrations) right below the budget line: one title
+ * entry + one entry per model row, each key sorting after
+ * "actsis-litellm:budget" (localeCompare: prefix ordering, then "-N").
+ */
+export interface TopModelsStatusEntry {
+  key: string;
+  text: string;
+}
+
+export function buildTopModelsStatusEntries(options: {
+  windowLabel: string;
+  rows: Array<{ model: string; spend: number | null }>;
+  totalSpend?: number | null;
+  keyPrefix?: string;
+  maxRows?: number;
+}): TopModelsStatusEntry[] {
+  const prefix = options.keyPrefix ?? TOP_MODELS_STATUS_KEY_PREFIX;
+  const maxRows = options.maxRows ?? TOP_MODELS_ROW_LIMIT;
+  const total = options.totalSpend;
+  const title =
+    total !== null && total !== undefined
+      ? `Top models (${options.windowLabel}) · $${total.toFixed(2)}`
+      : `Top models (${options.windowLabel})`;
+  const entries: TopModelsStatusEntry[] = [{ key: prefix, text: title }];
+  const rows = options.rows.slice(0, maxRows);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const spend =
+      row.spend === null || row.spend === undefined ? "-" : `$${row.spend.toFixed(2)}`;
+    entries.push({
+      key: `${prefix}-${i + 1}`,
+      text: `▸ ${row.model} ${spend}`,
+    });
+  }
+  return entries;
+}

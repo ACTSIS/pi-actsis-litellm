@@ -552,3 +552,48 @@ describe("buildTopModelsBlock", () => {
     assert.equal(rows.length, 1);
   });
 });
+
+import { buildTopModelsStatusEntries } from "../extensions/lib/usage.ts";
+
+describe("buildTopModelsStatusEntries", () => {
+  const rows = [
+    { model: "oc/glm-5.3-flash", spend: 34.59 },
+    { model: "oc/deepseek-v4.1-flash", spend: 7.12 },
+    { model: "oc/minimax-m3", spend: 1.65 },
+    { model: "oc/kimi-k2.7-code", spend: 0.33 },
+    { model: "oc/glm-5.3", spend: 0.1 },
+    { model: "oc/sixth-model", spend: 0.01 },
+  ];
+
+  it("builds a title entry plus one status row per model (capped at 5)", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows });
+    assert.equal(entries.length, 6); // title + 5 rows
+    assert.match(entries[0].text, /Top models \(7d\)/);
+    assert.match(entries[1].text, /oc\/glm-5\.3-flash \$34\.59/);
+    assert.ok(!entries.some((e) => e.text.includes("sixth-model")));
+  });
+
+  it("keys sort right after the budget status key", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows });
+    // Relative order must be: budget line first, then the title, then rows.
+    const keys = entries.map((e) => e.key);
+    const sorted = ["actsis-litellm:budget", ...keys].sort((a, b) => a.localeCompare(b));
+    assert.equal(sorted[0], "actsis-litellm:budget");
+    assert.equal(sorted[1], keys[0]);
+    assert.deepEqual(sorted.slice(1), keys);
+  });
+
+  it("renders dashed rows for null spend and skips the title total when unknown", () => {
+    const entries = buildTopModelsStatusEntries({
+      windowLabel: "7d",
+      rows: [{ model: "m", spend: null }],
+    });
+    assert.match(entries[1].text, /m -/);
+    assert.ok(!entries[0].text.includes("$"));
+  });
+
+  it("includes the window total in the title when provided", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 43.9 });
+    assert.match(entries[0].text, /\$43\.90/);
+  });
+});
