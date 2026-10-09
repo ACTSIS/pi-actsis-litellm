@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { readFile, writeFile, rm, access } from "node:fs/promises";
+import { readFile, writeFile, rm, access, mkdir } from "node:fs/promises";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { Api, AuthResult, Model } from "@earendil-works/pi-ai";
 import type { OAuthCredential } from "@earendil-works/pi-ai/compat";
@@ -32,6 +32,7 @@ export interface CommandDeps {
   getState: () => LiteLLMExtensionState;
   cachePath: string;
   authPath: string;
+  prefsPath: string;
   requestTimeoutMs: number;
 }
 
@@ -45,6 +46,12 @@ export function defaultCommandDeps(): CommandDeps {
       "actsis-litellm-models-cache.json",
     ),
     authPath: path.join(os.homedir(), ".pi", "agent", "auth.json"),
+    prefsPath: path.join(
+      os.homedir(),
+      ".pi",
+      "agent",
+      "actsis-litellm-prefs.json",
+    ),
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
   };
 }
@@ -391,6 +398,96 @@ export function buildLogoutHandler(deps: CommandDeps) {
 }
 
 const RANGE_ARG_RE = /^(\d{4}-\d{2}-\d{2})\s+(?:to|→|\.\.|,)\s+(\d{4}-\d{2}-\d{2})$/;
+
+// --- Top-widget preference (extension-owned prefs file) ---
+
+export interface Prefs {
+  topModelsWidget: boolean;
+}
+
+export function defaultsPrefs(): Prefs {
+  return { topModelsWidget: true };
+}
+
+export async function readPrefs(prefsPath: string): Promise<Prefs> {
+  try {
+    const raw = await readFile(prefsPath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      topModelsWidget:
+        typeof parsed.topModelsWidget === "boolean"
+          ? parsed.topModelsWidget
+          : defaultsPrefs().topModelsWidget,
+    };
+  } catch {
+    // Missing or corrupt prefs fall back to defaults; never fail a command
+    // because of a preference file.
+    return defaultsPrefs();
+  }
+}
+
+export async function readTopModelsWidgetEnabled(prefsPath: string): Promise<boolean> {
+  return (await readPrefs(prefsPath)).topModelsWidget;
+}
+
+export async function updateTopModelsWidgetEnabled(
+  prefsPath: string,
+  enabled: boolean,
+): Promise<void> {
+  const current = await readPrefs(prefsPath);
+  try {
+    await mkdir(path.dirname(prefsPath), { recursive: true });
+    await writeFile(
+      prefsPath,
+      `${JSON.stringify({ ...current, topModelsWidget: enabled }, null, 2)}\n`,
+      "utf8",
+    );
+  } catch {
+    // Preference persistence is best-effort: an unwritable HOME still allows
+    // a session-scoped toggle.
+  }
+}
+
+export interface TopToggleResult {
+  state: "on" | "off";
+  changed: boolean;
+}
+
+export function parseTopPrefArg(
+  args: string,
+  current: boolean,
+): TopToggleResult | { error: string } {
+  const trimmed = (args ?? "").trim().toLowerCase();
+  if (trimmed === "") {
+    const next = !current;
+    return { state: next ? "on" : "off", changed: true };
+  }
+  if (trimmed === "on" || trimmed === "off") {
+    const next = trimmed === "on";
+    return { state: next ? "on" : "off", changed: next !== current };
+  }
+  return { error: "expected nothing (toggle), `on`, or `off`" };
+}
+
+export function buildTopHandler(deps: CommandDeps) {
+  return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    try {
+      const current = await readTopModelsWidgetEnabled(deps.prefsPath);
+      const parsed = parseTopPrefArg(args, current);
+      if ("error" in parsed) {
+        notify(ctx, `actsis-litellm:top: ${parsed.error}`, "warning");
+        return;
+      }
+      if (parsed.changed) {
+        await updateTopModelsWidgetEnabled(deps.prefsPath, parsed.state === "on");
+      }
+      notify(ctx, `Top-5 widget: ${parsed.state}${parsed.changed ? " (saved)" : " (already)"}`, "info");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notify(ctx, `actsis-litellm:top failed: ${message}`, "error");
+    }
+  };
+}
 
 /**
  * Parses the /usage argument. Supported forms:

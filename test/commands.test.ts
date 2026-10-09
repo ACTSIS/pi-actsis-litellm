@@ -114,6 +114,7 @@ describe("commands", () => {
       getState: () => ({ providerId: "actsis-litellm" }),
       cachePath: path.join(tmpDir, `cache-${Date.now()}.json`),
       authPath: path.join(tmpDir, `auth-${Date.now()}.json`),
+      prefsPath: path.join(tmpDir, `prefs-${Date.now()}.json`),
       requestTimeoutMs: 30_000,
     };
   });

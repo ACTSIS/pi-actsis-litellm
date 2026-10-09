@@ -1,4 +1,6 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import os from "node:os";
+import path from "node:path";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConfigFileShape, ActsisEnabledConfig } from "./lib/config.ts";
 import {
@@ -15,6 +17,8 @@ import {
   buildUsageHandler,
   defaultCommandDeps,
   extractUsableApiKey,
+  buildTopHandler,
+  readTopModelsWidgetEnabled,
 } from "./lib/commands.ts";
 import { normalizeOverflowError } from "./lib/overflow.ts";
 import {
@@ -109,6 +113,11 @@ interface TopModelsCache {
   keys: string[];
 }
 let topModelsCache: TopModelsCache | null = null;
+let topModelsPrefsPath: string | null = null;
+
+function prefsPathDefault(): string {
+  return path.join(os.homedir(), ".pi", "agent", "actsis-litellm-prefs.json");
+}
 const GAUGE_CELLS = 8;
 const GAUGE_FILLED = "▰";
 const GAUGE_EMPTY = "▱";
@@ -193,11 +202,32 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<string | undefin
   }
 }
 
+async function clearTopModelRows(ctx: WidgetContext): Promise<void> {
+  // Remove every entry the last render may have created, plus all prior key
+  // schemes and the legacy belowEditor block from previous widget versions.
+  const staleKeys = [
+    TOP_MODELS_LEGACY_WIDGET_KEY,
+    ...(topModelsCache?.keys ?? []),
+    ...Array.from({ length: TOP_MODELS_MAX_ROWS + 3 }, (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}-${i}`),
+    ...Array.from({ length: TOP_MODELS_MAX_ROWS + 3 }, (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}${i}`),
+  ];
+  for (const key of new Set(staleKeys)) {
+    ctx.ui.setStatus?.(key, undefined);
+  }
+  ctx.ui.setWidget(TOP_MODELS_LEGACY_WIDGET_KEY, undefined, { placement: "belowEditor" });
+  topModelsCache = null;
+}
+
 async function refreshTopModelsWidget(
   ctx: WidgetContext,
   options: { force?: boolean } = {},
 ): Promise<void> {
   if (!ctx.hasUI) return;
+
+  if (!(await readTopModelsWidgetEnabled(topModelsPrefsPath ?? prefsPathDefault()))) {
+    await clearTopModelRows(ctx);
+    return; // user disabled the widget: no fetch, no render
+  }
 
   const nowMs = Date.now();
   if (
@@ -214,22 +244,8 @@ async function refreshTopModelsWidget(
       ctx.ui.setStatus?.(entry.key, entry.text);
     }
   };
-  const clear = (): void => {
-    // Remove every entry the last render may have created, plus the legacy
-    // belowEditor block from the previous widget version.
-    const staleKeys = [
-      TOP_MODELS_LEGACY_WIDGET_KEY,
-      ...(topModelsCache?.keys ?? []),
-      // All key schemes the widget ever used: legacy "...top-N" (pre-gauge),
-      // "...top0..9" (separator + rows) and "...top-N" newer rows.
-      ...Array.from({ length: TOP_MODELS_MAX_ROWS + 3 }, (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}-${i}`),
-      ...Array.from({ length: TOP_MODELS_MAX_ROWS + 3 }, (_, i) => `${TOP_MODELS_STATUS_KEY_PREFIX}${i}`),
-    ];
-    for (const key of new Set(staleKeys)) {
-      ctx.ui.setStatus?.(key, undefined);
-    }
-    ctx.ui.setWidget(TOP_MODELS_LEGACY_WIDGET_KEY, undefined, { placement: "belowEditor" });
-    topModelsCache = null;
+  const clear = async (): Promise<void> => {
+    await clearTopModelRows(ctx);
   };
 
   try {
@@ -376,6 +392,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   // Register commands first; they work independently of provider registration.
   const commandDeps = defaultCommandDeps();
   commandDeps.getState = () => state;
+  topModelsPrefsPath = commandDeps.prefsPath;
 
   pi.registerCommand("actsis-litellm:status", {
     description: "Show LiteLLM gateway status and model cache state",
@@ -396,6 +413,21 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   pi.registerCommand("actsis-litellm:logout", {
     description: "Revoke LiteLLM credentials and clear local state",
     handler: buildLogoutHandler(commandDeps),
+  });
+
+  pi.registerCommand("actsis-litellm:top", {
+    description: "Toggle the Top-5 models widget (no args = toggle; on | off)",
+    handler: async (args: string, ctx: unknown) => {
+      const commandCtx = ctx as ExtensionCommandContext;
+      await buildTopHandler(commandDeps)(args, commandCtx);
+      if (!(await readTopModelsWidgetEnabled(commandDeps.prefsPath))) {
+        // Disable: no fetch, no rows, no notifications from the refresh.
+        await clearTopModelRows(commandCtx as unknown as WidgetContext);
+      } else {
+        // Enable: show rows right away.
+        await refreshTopModelsWidget(commandCtx as unknown as WidgetContext, { force: true });
+      }
+    },
   });
 
   pi.registerCommand("actsis-litellm:budget", {
