@@ -128,6 +128,11 @@ Approved decisions (user, 2026-09-22):
 
 ## Evidence log
 
+- 2026-10-09 (T20 delivery): Issue #5 + PR #6 (type:bug) merged rebase
+  @ b809cc9; extractUsableApiKey reads AuthResult.auth.apiKey (pi auth
+  resolution) with oauth-credential fallbacks; /usage functional, /status
+  budget line restored, warnings preserved. 7 new tests, suite 240/240, CI green.
+
 - 2026-09-24: T15 internal-reference sanitation. A full-history audit found
   internal references in tracked files: a LAN address in a `gateway-url.ts`
   comment, an internal gateway hostname in `gateway-url.test.ts`, and a server
