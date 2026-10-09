@@ -553,7 +553,7 @@ describe("buildTopModelsBlock", () => {
   });
 });
 
-import { buildTopModelsStatusEntries } from "../extensions/lib/usage.ts";
+import { buildTopModelsStatusEntries, usageGauge } from "../extensions/lib/usage.ts";
 
 describe("buildTopModelsStatusEntries", () => {
   const rows = [
@@ -569,7 +569,7 @@ describe("buildTopModelsStatusEntries", () => {
     const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows });
     assert.equal(entries.length, 6); // title + 5 rows
     assert.match(entries[0].text, /Top models \(7d\)/);
-    assert.match(entries[1].text, /oc\/glm-5\.3-flash \$34\.59/);
+    assert.match(entries[1].text, /oc\/glm-5\.3-flash\s+\$34\.59/);
     assert.ok(!entries.some((e) => e.text.includes("sixth-model")));
   });
 
@@ -588,12 +588,75 @@ describe("buildTopModelsStatusEntries", () => {
       windowLabel: "7d",
       rows: [{ model: "m", spend: null }],
     });
-    assert.match(entries[1].text, /m -/);
+    assert.match(entries[1].text, /m\s+\$0\.00\s+0%/);
     assert.ok(!entries[0].text.includes("$"));
   });
 
   it("includes the window total in the title when provided", () => {
     const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 43.9 });
     assert.match(entries[0].text, /\$43\.90/);
+  });
+});
+
+
+describe("buildTopModelsStatusEntries (table + gauge)", () => {
+  const rows = [
+    { model: "oc/glm-5.3-flash", spend: 34.59 },
+    { model: "oc/ds-v4.1-flash", spend: 7.12 },
+    { model: "oc/minimax-m3", spend: 1.65 },
+  ];
+
+  it("aligns model names and spends across rows", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 43.9 });
+    const dataRows = entries.slice(1);
+    // Tabular: the spend column starts at the same column in every row, and
+    // so does the percentage/gauge tail.
+    // Spend is right-aligned: the end of the $xx.xx token is the same column.
+    const spendEnds = dataRows.map((e) => {
+      const m = e.text.match(/\$\d+\.\d\d/);
+      return m && m.index !== undefined ? m.index + m[0].length : -1;
+    });
+    assert.equal(new Set(spendEnds).size, 1);
+    const pctEnds = dataRows.map((e) => e.text.indexOf("%"));
+    assert.equal(new Set(pctEnds).size, 1);
+    assert.ok(dataRows.every((e) => e.text.endsWith("▱") || e.text.endsWith("▰")));
+  });
+
+  it("adds a budget-style gauge with the share of the window total", () => {
+    const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows, totalSpend: 43.9 });
+    const top = entries[1].text;
+    // 34.59 / 43.9 = 78.8% -> "79%" and mostly filled gauge.
+    assert.match(top, /79% [\u25b0\u25b1]*$/);
+    const gauges = entries.slice(1).map((e) => {
+      const gauge = e.text.match(/([▰▱]+)$/);
+      return gauge ? gauge[1] : "";
+    });
+    assert.equal(gauges.every((g) => [...g].length === 8), true);
+    // First row's gauge has more filled cells than the last row's.
+    const filled = (g: string) => [...g].filter((c) => c === "▰").length;
+    assert.ok(filled(gauges[0]) > filled(gauges[gauges.length - 1]));
+  });
+
+  it("full gauge for 100% share, empty for ~0%", () => {
+    const entries = buildTopModelsStatusEntries({
+      windowLabel: "7d",
+      rows: [
+        { model: "only", spend: 10 },
+        { model: "residual", spend: 0.0001 },
+      ],
+      totalSpend: 10.0,
+    });
+    const top = entries[1].text;
+    assert.match(top, /100%/);
+    const gauge = [...top].filter((c) => "▰".includes(c)).length;
+    assert.equal(gauge, 8);
+    const residual = entries[2].text;
+    assert.match(residual, /\s0%/);
+  });
+
+  it("renders the gauge via usageGauge (8 cells, budget style)", () => {
+    assert.equal(usageGauge(0), "▱".repeat(8));
+    assert.equal(usageGauge(100), "▰".repeat(8));
+    assert.equal([...usageGauge(50)].filter((c) => c === "▰").length, 4);
   });
 });
