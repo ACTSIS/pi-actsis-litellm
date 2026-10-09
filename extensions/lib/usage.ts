@@ -550,11 +550,15 @@ export function formatUsageLines(summary: ModelUsageSummary): string[] {
 export const TOP_MODELS_STATUS_KEY_PREFIX = "actsis-litellm:budget:top";
 
 /**
- * Builds the ctx.ui.setStatus entries that render the top-models block in the
- * shell's Status card (Integrations) right below the budget line: one title
- * entry + one entry per model row, each key sorting after
- * "actsis-litellm:budget" (localeCompare: prefix ordering, then "-N").
+ * Budget-style 8-cell gauge over a [0,100] percentage; same glyphs the
+ * extension's budget status line renders (▰ filled / ▱ empty).
  */
+export function usageGauge(percent: number, cells = 8): string {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((clamped / 100) * cells);
+  return "▰".repeat(filled) + "▱".repeat(cells - filled);
+}
+
 export interface TopModelsStatusEntry {
   key: string;
   text: string;
@@ -566,24 +570,43 @@ export function buildTopModelsStatusEntries(options: {
   totalSpend?: number | null;
   keyPrefix?: string;
   maxRows?: number;
+  maxNameWidth?: number;
 }): TopModelsStatusEntry[] {
   const prefix = options.keyPrefix ?? TOP_MODELS_STATUS_KEY_PREFIX;
   const maxRows = options.maxRows ?? TOP_MODELS_ROW_LIMIT;
-  const total = options.totalSpend;
-  const title =
-    total !== null && total !== undefined
-      ? `Top models (${options.windowLabel}) · $${total.toFixed(2)}`
+  const maxNameWidth = options.maxNameWidth ?? 26;
+
+  const rows = options.rows.slice(0, maxRows).map((row) => ({
+    model:
+      row.model.length > maxNameWidth
+        ? `${row.model.slice(0, maxNameWidth - 1)}…`
+        : row.model,
+    spend: row.spend,
+  }));
+
+  // Share percentages are relative to the window total: the sum of the rows
+  // themselves when the caller has no authoritative total.
+  const windowTotal =
+    options.totalSpend !== null && options.totalSpend !== undefined
+      ? options.totalSpend
+      : rows.reduce((sum, r) => sum + (r.spend ?? 0), 0);
+
+  const titleText =
+    options.totalSpend !== null && options.totalSpend !== undefined
+      ? `Top models (${options.windowLabel}) · $${options.totalSpend.toFixed(2)}`
       : `Top models (${options.windowLabel})`;
-  const entries: TopModelsStatusEntry[] = [{ key: prefix, text: title }];
-  const rows = options.rows.slice(0, maxRows);
+
+  const nameWidth = Math.max(0, ...rows.map((r) => r.model.length));
+  const spendWidth = 7; // "$999.99"
+  const pctWidth = 5; // "100%"
+
+  const entries: TopModelsStatusEntry[] = [{ key: prefix, text: titleText }];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const spend =
-      row.spend === null || row.spend === undefined ? "-" : `$${row.spend.toFixed(2)}`;
-    entries.push({
-      key: `${prefix}-${i + 1}`,
-      text: `▸ ${row.model} ${spend}`,
-    });
+    const spendValue = row.spend ?? 0;
+    const share = windowTotal > 0 ? Math.min(100, Math.max(0, (spendValue / windowTotal) * 100)) : 0;
+    const text = `${row.model.padEnd(nameWidth)} ${`$${spendValue.toFixed(2)}`.padStart(spendWidth)} ${String(Math.round(share)).padStart(pctWidth - 1)}% ${usageGauge(share)}`;
+    entries.push({ key: `${prefix}-${i + 1}`, text });
   }
   return entries;
 }
