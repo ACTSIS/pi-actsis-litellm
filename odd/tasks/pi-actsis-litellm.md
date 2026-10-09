@@ -154,6 +154,11 @@ Approved decisions (user, 2026-09-22):
       (usageGauge in usage.ts, tested).
 ## Evidence log
 
+- 2026-10-09 (T25 delivery): Issue #13 + PR #14 (type:feature) merged rebase
+  @ bdaa3e6; top-5 rows tabulated (padded name, right-aligned spend, share %)
+  with budget-style 8-cell gauges via usageGauge. 4 new tests, suite 266/266,
+  CI green.
+
 - 2026-10-09 (T24 delivery): Issue #11 + PR #12 (type:bug) merged rebase
   @ 9a1b92a; top models now render as setStatus rows (title + up to 5 rows)
   directly below the Budget line in the shell Status panel; legacy footer
