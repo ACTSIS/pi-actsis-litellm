@@ -157,12 +157,24 @@ Total                    $1.2345   89.0k   210
 
 ## Top models widget (TUI)
 
-pi's status area shows a boxed **Top models (7d)** block just below the budget
-indicator: the top 5 public model names by spend over the last 7 days, refreshed
-on the same triggers as the budget indicator (session start, after each agent
-turn, after a rewritten budget error, and manual `/actsis-litellm:budget`) with a
-5-minute TTL. Any failure clears the block silently; when there is no usage in
-the window the block is hidden.
+The shell's **Status** panel shows the top 5 public model names by spend over
+the last 7 days, rendered as status rows immediately below the **Budget** line
+in the Integrations group:
+
+```
+Integrations
+  Budget ▰▰▰▰▰▰▱▱ 78% · $466.32/$600.00
+  Top models (7d) · $43.90
+  ▸ oc/glm-5.3-flash $34.59
+  ▸ oc/deepseek-v4.1-flash $7.12
+  ...
+  pi-actsis-litellm · ready
+```
+
+Refreshed on the same triggers as the budget indicator (session start, after
+each agent turn, after a rewritten budget error, and manual
+`/actsis-litellm:budget`) with a 5-minute TTL. Any failure clears the rows
+silently; when there is no usage in the window the block is hidden.
 
 ## Gateway error normalization
 

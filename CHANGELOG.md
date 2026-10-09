@@ -20,10 +20,11 @@
   `ACTSIS_LITELLM_NO_SYSTEM_CA=1`. TLS trust errors now carry concrete Windows
   and Linux remediation steps (`setx NODE_USE_SYSTEM_CA 1`, `certutil -encode`,
   `NODE_EXTRA_CA_CERTS`).
-- **Tabulated /usage + top-5 TUI widget** — `/actsis-litellm:usage` renders an aligned
-  table (Model / Spend / Tokens / Reqs, compact k/M counts, totals row). The TUI shows a
-  boxed **Top models (7d)** block below the budget indicator (top 5 public names by spend,
-  7-day window, 5-min TTL, same triggers as the budget widget, hidden when empty).
+- **Tabulated /usage + top-5 status rows** — `/actsis-litellm:usage` renders an aligned
+  table (Model / Spend / Tokens / Reqs, compact k/M counts, totals row). The shell Status
+  panel shows **Top models (7d)** as status rows directly below the Budget line (top 5
+  public names by spend, 7-day window, 5-min TTL, same triggers as the budget widget,
+  hidden when empty).
 - **Per-model usage command** — `/actsis-litellm:usage` reports spend, tokens, and request
   counts aggregated per model via `GET /user/daily/activity`. Args: nothing (last 30 days),
   a day count (`14`), or an inclusive range (`2025-03-01 .. 2025-03-31`, also `to`/`,`/`→`).
