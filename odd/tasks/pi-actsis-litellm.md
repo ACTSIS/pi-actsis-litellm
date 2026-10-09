@@ -150,6 +150,11 @@ Approved decisions (user, 2026-09-22):
       keys sorting right after the budget key; drop the belowEditor block.
 ## Evidence log
 
+- 2026-10-09 (T24 delivery): Issue #11 + PR #12 (type:bug) merged rebase
+  @ 9a1b92a; top models now render as setStatus rows (title + up to 5 rows)
+  directly below the Budget line in the shell Status panel; legacy footer
+  block cleared on refresh. 4 new tests, suite 262/262, CI green.
+
 - 2026-10-09 (T22/T23 delivery): Issue #9 + PR #10 (type:feature) merged rebase
   @ 75a9611; /usage tabulated (Model/Spend/Tokens/Reqs, compact counts, Total
   footer) + Top models (7d) boxed widget belowEditor (top 5 public names, 5-min
