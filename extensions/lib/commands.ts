@@ -9,7 +9,7 @@ import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
 import {
   applyModelAliases,
   fetchModelUsage,
-  formatUsageLines,
+  formatUsageTable,
   isoDay,
   mapModelAliases,
   resolveDefaultUsageRange,
@@ -474,7 +474,7 @@ export function buildUsageHandler(deps: CommandDeps) {
       );
       notify(
         ctx,
-        `Usage (${parsed.label}):\n${formatUsageLines(display).join("\n")}`,
+        `Usage (${parsed.label}):\n${formatUsageTable(display).join("\n")}`,
         "info",
       );
     } catch (err) {
