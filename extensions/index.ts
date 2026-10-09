@@ -12,6 +12,7 @@ import {
   buildStatusHandler,
   buildModelsCommandHandler,
   buildLogoutHandler,
+  buildUsageHandler,
   defaultCommandDeps,
 } from "./lib/commands.ts";
 import { normalizeOverflowError } from "./lib/overflow.ts";
@@ -222,6 +223,12 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   pi.registerCommand("actsis-litellm:models", {
     description: "Force-sync LiteLLM model catalog and show changes",
     handler: buildModelsCommandHandler(commandDeps),
+  });
+
+  pi.registerCommand("actsis-litellm:usage", {
+    description:
+      "Show per-model usage (spend/tokens/requests); args: [days] or 'YYYY-MM-DD .. YYYY-MM-DD'",
+    handler: buildUsageHandler(commandDeps),
   });
 
   pi.registerCommand("actsis-litellm:logout", {

@@ -6,6 +6,13 @@ import type { Api, AuthResult, Model } from "@earendil-works/pi-ai";
 import type { OAuthCredential } from "@earendil-works/pi-ai/compat";
 import { resolveConfig, type ActsisEnabledConfig } from "./config.ts";
 import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
+import {
+  fetchModelUsage,
+  formatUsageLines,
+  isoDay,
+  resolveDefaultUsageRange,
+  type UsageRange,
+} from "./usage.ts";
 import { AuthError, ConfigError } from "./errors.ts";
 import { revokeToken, type CliAuthDiscovery } from "./client.ts";
 import { storedToDiscovery } from "./provider.ts";
@@ -346,6 +353,88 @@ export function buildLogoutHandler(deps: CommandDeps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `actsis-litellm:logout failed: ${message}`, "error");
+    }
+  };
+}
+
+const RANGE_ARG_RE = /^(\d{4}-\d{2}-\d{2})\s+(?:to|→|\.\.|,)\s+(\d{4}-\d{2}-\d{2})$/;
+
+/**
+ * Parses the /usage argument. Supported forms:
+ *   (empty)            -> default range (last 30 days inclusive)
+ *   7 | 14 | 30        -> last N days inclusive (clamped to >= 1)
+ *   2025-03-01 .. 2025-03-31 (separators: to, .., comma, arrow)
+ */
+export function parseUsageRangeArg(
+  args: string,
+  nowMs?: number,
+): { range: UsageRange; label: string } | { error: string } {
+  const trimmed = (args ?? "").trim();
+  const defaults = resolveDefaultUsageRange(nowMs ?? Date.now());
+  if (!trimmed) {
+    return { range: defaults, label: "last 30 days" };
+  }
+  if (/^\d+$/.test(trimmed)) {
+    const days = Math.max(1, parseInt(trimmed, 10));
+    const end = isoDay(nowMs ?? Date.now());
+    const start = isoDay(
+      (nowMs ?? Date.now()) - (days - 1) * 24 * 60 * 60 * 1000,
+    );
+    return { range: { startDate: start, endDate: end }, label: `last ${days} day${days === 1 ? "" : "s"}` };
+  }
+  const rangeMatch = trimmed.match(RANGE_ARG_RE);
+  if (rangeMatch) {
+    const [, start, end] = rangeMatch;
+    if (Date.parse(`${start}T00:00:00Z`) > Date.parse(`${end}T00:00:00Z`)) {
+      return { error: `start date ${start} is after end date ${end}` };
+    }
+    return { range: { startDate: start, endDate: end }, label: `${start} → ${end}` };
+  }
+  return {
+    error:
+      "expected nothing (last 30 days), a day count like `14`, or a range like `2025-03-01 .. 2025-03-31`",
+  };
+}
+
+export function buildUsageHandler(deps: CommandDeps) {
+  return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const providerId = getProviderId(deps);
+    const parsed = parseUsageRangeArg(args);
+    if ("error" in parsed) {
+      notify(ctx, `actsis-litellm:usage: ${parsed.error}`, "warning");
+      return;
+    }
+
+    try {
+      const cfg = await resolveStatusConfig(providerId, deps.authPath);
+      if (!cfg) {
+        notify(
+          ctx,
+          "Gateway not configured. Run /login and select this provider to set it up.",
+          "warning",
+        );
+        return;
+      }
+      const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
+      const oauthCredential = extractOAuthCredential(authResult);
+      if (!oauthCredential || typeof oauthCredential.access !== "string") {
+        notify(ctx, "No usable credential. Run /login first.", "warning");
+        return;
+      }
+      const summary = await fetchModelUsage(
+        cfg.baseUrl,
+        oauthCredential.access,
+        deps.requestTimeoutMs,
+        parsed.range,
+      );
+      notify(
+        ctx,
+        `Usage (${parsed.label}):\n${formatUsageLines(summary).join("\n")}`,
+        "info",
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notify(ctx, `actsis-litellm:usage failed: ${message}`, "error");
     }
   };
 }
