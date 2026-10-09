@@ -175,6 +175,11 @@ Approved decisions (user, 2026-09-22):
       off clears rows and skips refreshes; on refreshes immediately.
 ## Evidence log
 
+- 2026-10-09 (T28/T29 delivery): Issue #19 + PR #20 (type:bug) merged rebase
+  @ c03385b; NBSP column padding survives the shell sanitizer (contract tests
+  vs sanitizeStatus), /actsis-litellm:top toggle persisted in
+  actsis-litellm-prefs.json (default on). 11 new tests, suite 286/286, CI green.
+
 - 2026-10-09 (T27 delivery): Issue #17 + PR #18 (type:bug) merged rebase
   @ eed5182; top-5 rows tabulated to the user's sample layout: "=" separator
   under the title, name/spend/%/gauge columns aligned, keys re-keyed
