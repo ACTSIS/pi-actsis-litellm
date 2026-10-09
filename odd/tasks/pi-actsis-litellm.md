@@ -144,6 +144,11 @@ Approved decisions (user, 2026-09-22):
 
 ## Evidence log
 
+- 2026-10-09 (T22/T23 delivery): Issue #9 + PR #10 (type:feature) merged rebase
+  @ 75a9611; /usage tabulated (Model/Spend/Tokens/Reqs, compact counts, Total
+  footer) + Top models (7d) boxed widget belowEditor (top 5 public names, 5-min
+  TTL, budget triggers, fail-silent). 9 new tests, suite 258/258, CI green.
+
 - 2026-10-09 (T21 delivery): Issue #7 + PR #8 (type:feature) merged rebase
   @ be32271; /usage shows public oc/... names via suffix aliasing over the
   chat catalog (mapModelAliases + applyModelAliases); unknown keys keep the
