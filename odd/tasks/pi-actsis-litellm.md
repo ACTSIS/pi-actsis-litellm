@@ -163,6 +163,13 @@ Approved decisions (user, 2026-09-22):
       daily-activity counts upstream attempts). Test-first.
 ## Evidence log
 
+- 2026-10-09 (T26 delivery): Issue #15 + PR #16 (type:bug) merged rebase
+  @ 8f0a6f3. Dashboard parity: aggregated endpoint primary (query-scoped
+  totals), user_id scope from stored credential userId, full pagination walk
+  fallback (row sums), gateway/daily/activity footnote for Request counts.
+  Live-verified vs dashboard: $476.85 vs $475.99 (~0.2%), gateway requests
+  87,072 vs 86,730. 6 new tests, suite 273/273, CI green.
+
 - 2026-10-09 (T25 delivery): Issue #13 + PR #14 (type:feature) merged rebase
   @ bdaa3e6; top-5 rows tabulated (padded name, right-aligned spend, share %)
   with budget-style 8-cell gauges via usageGauge. 4 new tests, suite 266/266,
