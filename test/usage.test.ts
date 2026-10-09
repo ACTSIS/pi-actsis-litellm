@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  applyModelAliases,
   fetchModelUsage,
   formatUsageLines,
   isoDay,
+  mapModelAliases,
   resolveDefaultUsageRange,
 } from "../extensions/lib/usage.ts";
 
@@ -345,5 +347,86 @@ describe("formatUsageLines", () => {
       /Usage 2025-03-20 → 2025-03-27 \(8 days\): spend \$0\.0300/,
     );
     assert.match(lines[1], /gpt-x\s+\$0\.0200\s+460 tok\s+5 reqs/);
+  });
+});
+describe("mapModelAliases", () => {
+  const publicIds = ["oc/glm-5.3-flash", "oc/glm-5.3", "oc/qwen3.6-35b"];
+
+  it("passes through keys that already match a public id", () => {
+    const aliases = mapModelAliases(["oc/glm-5.3-flash"], publicIds);
+    assert.equal(aliases.get("oc/glm-5.3-flash"), undefined);
+  });
+
+  it("maps an internal deployment name to the public alias via shared suffix", () => {
+    const aliases = mapModelAliases(
+      ["openai/glm-5.3-flash", "openai/deepseek-v4.1-flash"],
+      publicIds,
+    );
+    assert.equal(aliases.get("openai/glm-5.3-flash"), "oc/glm-5.3-flash");
+    assert.equal(aliases.get("openai/deepseek-v4.1-flash"), undefined);
+  });
+
+  it("is deterministic when two public ids share a suffix (sorted first wins)", () => {
+    const aliases = mapModelAliases(
+      ["openai/glm-5.3-flash"],
+      ["oc/glm-5.3-flash", "team2/glm-5.3-flash"],
+    );
+    assert.equal(aliases.get("openai/glm-5.3-flash"), "oc/glm-5.3-flash");
+  });
+
+  it("leaves unknown keys alone (e.g. non-chat models filtered from catalog)", () => {
+    const aliases = mapModelAliases(["openai/nomic-embed"], publicIds);
+    assert.equal(aliases.get("openai/nomic-embed"), undefined);
+  });
+
+  it("is case-insensitive on the suffix", () => {
+    const aliases = mapModelAliases(["openai/GLM-5.3-Flash"], publicIds);
+    assert.equal(aliases.get("openai/GLM-5.3-Flash"), "oc/glm-5.3-flash");
+  });
+});
+
+describe("applyModelAliases", () => {
+  const baseSummary = () => ({
+    startDate: "2025-03-01",
+    endDate: "2025-03-31",
+    totals: {
+      spend: 0.3,
+      promptTokens: 100,
+      completionTokens: 200,
+      totalTokens: 300,
+      apiRequests: 6,
+    },
+    models: [
+      { model: "openai/glm-5.3-flash", spend: 0.2, promptTokens: 10, completionTokens: 20, totalTokens: 30, apiRequests: 2 },
+      { model: "oc/glm-5.3-flash", spend: 0.1, promptTokens: 20, completionTokens: 40, totalTokens: 60, apiRequests: 1 },
+      { model: "oc/qwen3.6-35b", spend: 0.1, promptTokens: 70, completionTokens: 140, totalTokens: 210, apiRequests: 3 },
+    ],
+  });
+
+  it("merges entries aliasing to the same public id and re-sorts by spend", () => {
+    const aliases = new Map([["openai/glm-5.3-flash", "oc/glm-5.3-flash"]]);
+    const merged = applyModelAliases(baseSummary(), aliases);
+    assert.deepEqual(
+      merged.models.map((m) => [m.model, Math.round((m.spend ?? 0) * 1e6) / 1e6, m.apiRequests]),
+      [
+        ["oc/glm-5.3-flash", 0.3, 3],
+        ["oc/qwen3.6-35b", 0.1, 3],
+      ],
+    );
+    // Totals are unchanged by display-time merging.
+    assert.equal(merged.totals.spend, 0.3);
+    assert.equal(merged.totals.apiRequests, 6);
+  });
+
+  it("returns an equivalent summary when the alias map is empty", () => {
+    const merged = applyModelAliases(baseSummary(), new Map());
+    assert.deepEqual(merged.models, baseSummary().models);
+  });
+
+  it("keeps totals independent from the input (no shared mutable state)", () => {
+    const aliases = new Map([["openai/glm-5.3-flash", "oc/glm-5.3-flash"]]);
+    const original = baseSummary();
+    applyModelAliases(original, aliases);
+    assert.equal(original.models.length, 3);
   });
 });
