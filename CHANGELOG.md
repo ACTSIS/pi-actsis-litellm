@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.4.0 — 2026-10-13 — Paired release with opencode-actsis-litellm
+
+Version numbers now move in lockstep with the sister OpenCode plugin
+(`opencode-actsis-litellm`, released at the same tag `v0.4.0`). This tag
+bundles the full parity cycle previously tracked as 0.1.0 Unreleased.
 
 - **Public model names for /usage** — Spend logs record LiteLLM's internal deployment
   names (`openai/glm-5.3-flash`); `/usage` now maps them to the public catalog ids users
