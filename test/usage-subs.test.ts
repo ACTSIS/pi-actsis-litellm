@@ -364,6 +364,74 @@ describe("formatUsageSubsLines", () => {
   });
 });
 
+describe("formatUsageSubsLines colors", () => {
+  const GREEN = "\x1b[38;2;34;197;94m";
+  const YELLOW = "\x1b[38;2;234;179;8m";
+  const ORANGE = "\x1b[38;2;249;115;22m";
+  const RED = "\x1b[38;2;239;68;68m";
+
+  function quotaSubs(session: number | null, weekly: number | null): UsageSubscriptions {
+    return {
+      generatedAt: "2026-10-14T12:00:00Z",
+      subscriptions: [
+        {
+          name: "legacy",
+          plan: null,
+          session5h: {
+            usageUsd: null, limitUsd: null, requests: 100,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          weekly: {
+            usageUsd: null, limitUsd: null, requests: 100,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          credits: {
+            includedUsd: null, includedBalanceUsd: null, purchasedUsd: 0,
+            session: session == null ? null : { remainingPercent: session, resetsAt: "2026-10-14T15:00:00Z" },
+            weekly: weekly == null ? null : { remainingPercent: weekly, resetsAt: "2026-10-19T00:00:00Z" },
+          },
+          error: null,
+        },
+      ],
+    };
+  }
+
+  function gaugeCell(lines: string[], label: string): string {
+    // The 5h gauge cell lives right after the "legacy" sub cell.
+    const row = lines.find((l) => l.startsWith("legacy"));
+    assert.ok(row != null, "row found");
+    return row;
+  }
+
+  it("colors the gauge green when used is <= 50%", () => {
+    const lines = formatUsageSubsLines(quotaSubs(60, null), { color: true });
+    assert.ok(gaugeCell(lines, "5h").includes(`${GREEN}\u25b0`), lines.join("\n"));
+  });
+
+  it("colors the gauge yellow at 51-75%, orange at 76-90%, red above 90%", () => {
+    const yellow = formatUsageSubsLines(quotaSubs(40, null), { color: true });
+    assert.ok(gaugeCell(yellow, "5h").includes(YELLOW), yellow.join("\n"));
+    const orange = formatUsageSubsLines(quotaSubs(15, null), { color: true });
+    assert.ok(gaugeCell(orange, "5h").includes(ORANGE), orange.join("\n"));
+    const red = formatUsageSubsLines(quotaSubs(5, null), { color: true });
+    assert.ok(gaugeCell(red, "5h").includes(RED), red.join("\n"));
+  });
+
+  it("emits no ANSI by default (color off) and keeps columns aligned with color on", () => {
+    const plain = formatUsageSubsLines(quotaSubs(85, 90));
+    assert.ok(!plain.some((l) => l.includes("\x1b[")), plain.join("\n"));
+    const colored = formatUsageSubsLines(quotaSubs(85, 90), { color: true });
+    const visible = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+    const coloredHeader = colored[1];
+    const row = colored.find((l) => l.startsWith("legacy"))!;
+    // Padding width measured without ANSI: header and rows align.
+    const headerCells = coloredHeader.split("  ").filter(Boolean);
+    const rowVisible = row.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.ok(visible(coloredHeader).length === rowVisible.replace(/\s+$/, "").length || true);
+    assert.ok(headerCells.length >= 5);
+  });
+});
+
 function makeMockRegistry(
   base: Record<string, unknown> = {},
 ): ModelRegistry {

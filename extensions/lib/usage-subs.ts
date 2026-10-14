@@ -1,5 +1,33 @@
 import { AuthError, CatalogError } from "./errors.ts";
 import { usageGauge } from "./usage.ts";
+/**
+ * ANSI truecolor palettes for the usage gauge thresholds. Sent only when the
+ * caller opts in ({color: true}, the /usage-subs command in pi): the chat
+ * notify path renders embedded SGR runs over a dim wrapper, and pi-tui
+ * measures width stripping ANSI. Plain output stays byte-identical when the
+ * option is omitted (test fixtures, tool surfaces without ANSI guarantees).
+ */
+const GAUGE_COLORS = {
+  green: "38;2;34;197;94",
+  yellow: "38;2;234;179;8",
+  orange: "38;2;249;115;22",
+  red: "38;2;239;68;68",
+} as const;
+
+/** Thresholds over used%: <=50 green, 51-75 yellow, 76-90 orange, >90 red. */
+function gaugeColorAnsi(usedPercent: number): string {
+  const color = usedPercent <= 50 ? GAUGE_COLORS.green
+    : usedPercent <= 75 ? GAUGE_COLORS.yellow
+    : usedPercent <= 90 ? GAUGE_COLORS.orange
+    : GAUGE_COLORS.red;
+  return `\x1b[${color}m`;
+}
+
+const ANSI_SGR = /\x1b\[[0-9;]*m/g;
+
+function visibleLength(cell: string): number {
+  return cell.replace(ANSI_SGR, "").length;
+}
 
 /** Rolling 5h window or weekly totals for one subscription. */
 export interface WindowUsage {
@@ -181,14 +209,15 @@ export async function fetchUsageSubs(
 }
 
 /** Window cell for the /usage-subs table, in /usage's gauge-or-absolute discipline. */
-function formatWindowCell(window: WindowUsage, quota: WindowQuota | null): string {
+function formatWindowCell(window: WindowUsage, quota: WindowQuota | null, color: boolean): string {
   const usage = window.usageUsd ?? 0;
   const requests = window.requests ?? 0;
 
   // Legacy-plan dashboard quota wins: remaining % (used = 100 - remaining).
   if (quota != null && quota.remainingPercent != null) {
     const used = Math.min(100, Math.max(0, 100 - quota.remainingPercent));
-    return `${usageGauge(used)} ${Math.round(used)}% ${requests.toLocaleString("en-US")} reqs`;
+    const run = `${usageGauge(used)} ${Math.round(used)}% ${requests.toLocaleString("en-US")} reqs`;
+    return color ? `${gaugeColorAnsi(used)}${run}\x1b[2;39m` : run;
   }
 
   const tokens = (window.inputTokens ?? 0) + (window.outputTokens ?? 0);
@@ -201,7 +230,8 @@ function formatWindowCell(window: WindowUsage, quota: WindowQuota | null): strin
         : usage > 0
           ? 100
           : 0;
-    return `${usageGauge(percent)} $${usage.toFixed(2)} / $${limit.toFixed(2)}`;
+    const run = `${usageGauge(percent)} $${usage.toFixed(2)} / $${limit.toFixed(2)}`;
+    return color ? `${gaugeColorAnsi(percent)}${run}\x1b[2;39m` : run;
   }
 
   return `${requests.toLocaleString("en-US")} reqs · ${tokens.toLocaleString("en-US")} tok`;
@@ -232,8 +262,17 @@ function creditsCell(credits: SubscriptionCredits): string | null {
  * /usage command's discipline: padded header row, "-" separator, no totals row
  * (subscriptions are separate accounts). Error subscriptions render their
  * `(error: ...)` in the first window cell with dashes elsewhere.
+ *
+ * With `{color: true}` the gauge cells carry ANSI truecolor thresholds
+ * (green/yellow/orange/red over used%) and run through terminals fine: the
+ * notify path supports embedded SGR and the width math strips it. Padding is
+ * measured on visible length so colored cells stay aligned.
  */
-export function formatUsageSubsLines(data: UsageSubscriptions): string[] {
+export function formatUsageSubsLines(
+  data: UsageSubscriptions,
+  options: { color?: boolean } = {},
+): string[] {
+  const color = options.color === true;
   const lines: string[] = [];
   const generatedAt = data.generatedAt ?? "-";
   lines.push(`Usage subscriptions (generated at ${generatedAt}, UTC):`);
@@ -246,17 +285,20 @@ export function formatUsageSubsLines(data: UsageSubscriptions): string[] {
   const header = ["Sub", "5h used", "5h resets (UTC)", "Weekly used", "Weekly resets (UTC)", "Credits"];
   const rows = data.subscriptions.map((sub) => [
     sub.plan ? `${sub.name} (${sub.plan})` : sub.name,
-    sub.error ? `(error: ${sub.error})` : formatWindowCell(sub.session5h, sub.credits.session),
+    sub.error ? `(error: ${sub.error})` : formatWindowCell(sub.session5h, sub.credits.session, color),
     sub.error ? "-" : formatResetsCell(sub.credits.session),
-    sub.error ? "-" : formatWindowCell(sub.weekly, sub.credits.weekly),
+    sub.error ? "-" : formatWindowCell(sub.weekly, sub.credits.weekly, color),
     sub.error ? "-" : formatResetsCell(sub.credits.weekly),
     sub.error ? "-" : creditsCell(sub.credits) ?? "-",
   ]);
 
   const width = header.map((_, i) =>
-    Math.max(header[i].length, ...rows.map((row) => row[i].length)));
+    Math.max(header[i].length, ...rows.map((row) => visibleLength(row[i]))));
   const renderRow = (cells: string[]): string =>
-    cells.map((cell, i) => cell.padEnd(width[i])).join("  ").trimEnd();
+    cells.map((cell, i) => visibleLength(cell) < width[i]
+      ? cell + " ".repeat(width[i] - visibleLength(cell))
+      : cell,
+    ).join("  ").trimEnd();
 
   lines.push(renderRow(header));
   lines.push("-".repeat(renderRow(header).length));

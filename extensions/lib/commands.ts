@@ -631,7 +631,7 @@ export function buildUsageSubsHandler(deps: CommandDeps) {
         apiKey,
         deps.requestTimeoutMs,
       );
-      notify(ctx, formatUsageSubsLines(data).join("\n"), "info");
+      notify(ctx, formatUsageSubsLines(data, { color: true }).join("\n"), "info");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `actsis-litellm:usage-subs failed: ${message}`, "error");
