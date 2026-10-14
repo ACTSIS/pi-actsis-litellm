@@ -19,6 +19,10 @@ import {
 import { AuthError, ConfigError } from "./errors.ts";
 import { revokeToken, type CliAuthDiscovery } from "./client.ts";
 import { storedToDiscovery } from "./provider.ts";
+import {
+  fetchUsageSubs,
+  formatUsageSubsLines,
+} from "./usage-subs.ts";
 import { loadCachedModels, computeCacheAge } from "./catalog.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { LiteLLMExtensionState } from "../index.ts";
@@ -596,6 +600,41 @@ export function buildUsageHandler(deps: CommandDeps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `actsis-litellm:usage failed: ${message}`, "error");
+    }
+  };
+}
+
+export function buildUsageSubsHandler(deps: CommandDeps) {
+  return async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const providerId = getProviderId(deps);
+
+    try {
+      const cfg = await resolveStatusConfig(providerId, deps.authPath);
+      if (!cfg) {
+        notify(
+          ctx,
+          "Gateway not configured. Run /login and select this provider to set it up.",
+          "warning",
+        );
+        return;
+      }
+
+      const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
+      const apiKey = extractUsableApiKey(authResult);
+      if (!apiKey) {
+        notify(ctx, "No usable credential. Run /login first.", "warning");
+        return;
+      }
+
+      const data = await fetchUsageSubs(
+        cfg.baseUrl,
+        apiKey,
+        deps.requestTimeoutMs,
+      );
+      notify(ctx, formatUsageSubsLines(data, { color: true }).join("\n"), "info");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notify(ctx, `actsis-litellm:usage-subs failed: ${message}`, "error");
     }
   };
 }
