@@ -74,6 +74,8 @@ function sampleBody(): unknown {
           includedUsd: 100.0,
           includedBalanceUsd: 80.0,
           purchasedUsd: 20.0,
+          session: { remainingPercent: 85.47, resetsAt: "2026-10-14T15:00:00Z" },
+          weekly: null,
         },
         error: null,
       },
@@ -99,6 +101,9 @@ describe("fetchUsageSubs", () => {
       assert.equal(result.subscriptions[0].session5h.usageUsd, 5.0);
       assert.equal(result.subscriptions[0].weekly.usageUsd, 20.0);
       assert.equal(result.subscriptions[0].credits.includedUsd, 100.0);
+      assert.equal(result.subscriptions[0].credits.session?.remainingPercent, 85.47);
+      assert.equal(result.subscriptions[0].credits.session?.resetsAt, "2026-10-14T15:00:00Z");
+      assert.equal(result.subscriptions[0].credits.weekly, null);
       assert.equal(result.subscriptions[0].error, null);
     } finally {
       recorder.restore();
@@ -195,6 +200,8 @@ describe("formatUsageSubsLines", () => {
             includedUsd: 100.0,
             includedBalanceUsd: 80.0,
             purchasedUsd: 20.0,
+            session: null,
+            weekly: null,
           },
           error: null,
         },
@@ -240,6 +247,8 @@ describe("formatUsageSubsLines", () => {
             includedUsd: null,
             includedBalanceUsd: null,
             purchasedUsd: null,
+            session: null,
+            weekly: null,
           },
           error: null,
         },
@@ -281,6 +290,8 @@ describe("formatUsageSubsLines", () => {
             includedUsd: null,
             includedBalanceUsd: null,
             purchasedUsd: null,
+            session: null,
+            weekly: null,
           },
           error: "upstream rate limit exceeded",
         },
@@ -291,6 +302,48 @@ describe("formatUsageSubsLines", () => {
     assert.ok(!lines.some((l) => l.includes("5h:")));
     assert.ok(!lines.some((l) => l.includes("Weekly:")));
     assert.ok(!lines.some((l) => l.includes("Credits:")));
+  });
+
+  it("renders the legacy quota gauge and resets from remaining_percent", () => {
+    const lines = formatUsageSubsLines({
+      generatedAt: "2026-10-14T12:00:00Z",
+      subscriptions: [
+        {
+          name: "legacy",
+          plan: null,
+          session5h: {
+            usageUsd: null,
+            limitUsd: null,
+            requests: 642,
+            inputTokens: null,
+            outputTokens: null,
+            from: null,
+            until: null,
+          },
+          weekly: {
+            usageUsd: null,
+            limitUsd: null,
+            requests: 15740,
+            inputTokens: null,
+            outputTokens: null,
+            from: null,
+            until: null,
+          },
+          credits: {
+            includedUsd: null,
+            includedBalanceUsd: null,
+            purchasedUsd: 0,
+            session: { remainingPercent: 85.47, resetsAt: "2026-10-14T15:00:00Z" },
+            weekly: { remainingPercent: 88.15, resetsAt: "2026-10-19T00:00:00Z" },
+          },
+          error: null,
+        },
+      ],
+    });
+    // Used = 100 - remaining (85.47 -> ~15%).
+    assert.ok(lines.some((l) => /5h: .*15% used.*642 reqs.*resets 2026-10-14T15:00:00Z/.test(l)), lines.join("\n"));
+    assert.ok(lines.some((l) => /Weekly: .*12% used.*15,740 reqs.*resets 2026-10-19T00:00:00Z/.test(l)), lines.join("\n"));
+    assert.ok(lines.some((l) => /Credits: purchased \$0\.00/.test(l)));
   });
 
   it("shows the no-subscriptions message for an empty list", () => {

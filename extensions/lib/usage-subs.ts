@@ -17,6 +17,15 @@ export interface SubscriptionCredits {
   includedUsd: number | null;
   includedBalanceUsd: number | null;
   purchasedUsd: number | null;
+  /** Legacy-plan window quotas (the dashboard's % per window); credit plans null. */
+  session: WindowQuota | null;
+  weekly: WindowQuota | null;
+}
+
+/** Remaining percent of a 5h/weekly usage window, as Ollama's dashboard shows. */
+export interface WindowQuota {
+  remainingPercent: number | null;
+  resetsAt: string | null;
 }
 
 /** Per-subscription usage returned by the single `/ollama-usage` call. */
@@ -67,12 +76,23 @@ function asWindowUsage(value: unknown): WindowUsage {
   };
 }
 
+function asQuota(value: unknown): WindowQuota | null {
+  const record = asRecord(value);
+  if (record.remainingPercent === undefined) return null;
+  return {
+    remainingPercent: asNullableNumber(record.remainingPercent),
+    resetsAt: asString(record.resetsAt),
+  };
+}
+
 function asCredits(value: unknown): SubscriptionCredits {
   const record = asRecord(value);
   return {
     includedUsd: asNullableNumber(record.includedUsd),
     includedBalanceUsd: asNullableNumber(record.includedBalanceUsd),
     purchasedUsd: asNullableNumber(record.purchasedUsd),
+    session: asQuota(record.session),
+    weekly: asQuota(record.weekly),
   };
 }
 
@@ -160,10 +180,23 @@ export async function fetchUsageSubs(
   return parseUsageSubscriptions(body);
 }
 
-function formatWindowLine(label: string, window: WindowUsage): string {
+/** Legacy-plan window line: the dashboard's own remaining % (used = 100-remaining). */
+function formatQuotaLine(label: string, quota: WindowQuota, requests: number | null): string {
+  const remaining = quota.remainingPercent ?? 0;
+  const used = Math.min(100, Math.max(0, 100 - remaining));
+  const resets = quota.resetsAt ? ` · resets ${quota.resetsAt}` : "";
+  const reqs = requests != null ? ` · ${requests.toLocaleString("en-US")} reqs` : "";
+  return `${label}: ${usageGauge(used)} ${Math.round(used)}% used${reqs}${resets}`;
+}
+
+function formatWindowLine(label: string, window: WindowUsage, quota: WindowQuota | null): string {
   const usage = window.usageUsd ?? 0;
   const requests = window.requests ?? 0;
   const tokens = (window.inputTokens ?? 0) + (window.outputTokens ?? 0);
+
+  if (quota != null && quota.remainingPercent != null) {
+    return formatQuotaLine(label, quota, requests);
+  }
 
   if (window.limitUsd != null) {
     const limit = window.limitUsd;
@@ -213,8 +246,8 @@ export function formatUsageSubsLines(data: UsageSubscriptions): string[] {
       continue;
     }
 
-    lines.push(`  ${formatWindowLine("5h", sub.session5h)}`);
-    lines.push(`  ${formatWindowLine("Weekly", sub.weekly)}`);
+    lines.push(`  ${formatWindowLine("5h", sub.session5h, sub.credits.session)}`);
+    lines.push(`  ${formatWindowLine("Weekly", sub.weekly, sub.credits.weekly)}`);
     const credits = formatCreditsLine(sub.credits);
     if (credits) {
       lines.push(`  ${credits}`);
