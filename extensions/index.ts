@@ -413,7 +413,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("actsis-litellm:usage-subs", {
     description:
-      "Show per-subscription Ollama Cloud usage (5h rolling + weekly)",
+      "Show per-subscription Ollama Cloud usage and reset countdowns (5h: hours/minutes; weekly: days/hours)",
     handler: buildUsageSubsHandler(commandDeps),
   });
 

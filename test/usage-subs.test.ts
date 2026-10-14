@@ -311,7 +311,8 @@ describe("formatUsageSubsLines", () => {
     assert.ok(!lines.some((l) => l.includes("included $")));
   });
 
-  it("renders the legacy quota gauge and resets from remaining_percent", () => {
+  it("renders the legacy quota gauge and remaining reset durations", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
     const lines = formatUsageSubsLines({
       generatedAt: "2026-10-14T12:00:00Z",
       subscriptions: [
@@ -351,10 +352,46 @@ describe("formatUsageSubsLines", () => {
     // 85.47 -> ~15%, 88.15 -> ~12%); padded columns collapse to \s+ in patterns.
     assert.ok(
       lines.some((l) =>
-        /legacy\s+.*15% 642 reqs\s+10-14 15:00\s+.*12% 15,740 reqs\s+10-19 00:00\s+purchased \$0\.00/.test(l),
+        /legacy\s+.*15% 642 reqs\s+3 h 0 min\s+.*12% 15,740 reqs\s+4 d 12 h\s+purchased \$0\.00/.test(l),
       ),
       lines.join("\n"),
     );
+  });
+
+  it("formats both countdown units, rounding, expired and unavailable resets", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
+    const window = {
+      usageUsd: null, limitUsd: null, requests: 7,
+      inputTokens: 10, outputTokens: 20, from: null, until: null,
+    };
+    const cases = [
+      ["2026-10-14T14:35:00Z", "2026-10-17T20:00:00Z", "2 h 35 min", "3 d 8 h"],
+      ["2026-10-14T12:00:01Z", "2026-10-14T12:00:01Z", "0 h 1 min", "0 d 1 h"],
+      ["2026-10-14T12:59:01Z", "2026-10-15T11:59:01Z", "1 h 0 min", "1 d 0 h"],
+      ["2026-10-14T12:00:00Z", "2026-10-13T12:00:00Z", "0 h 0 min", "0 d 0 h"],
+      [null, "invalid", "-", "-"],
+    ] as const;
+    for (const [sessionReset, weeklyReset, sessionText, weeklyText] of cases) {
+      const lines = formatUsageSubsLines({
+        generatedAt: null,
+        subscriptions: [{
+          name: "countdown", plan: null, session5h: window, weekly: window,
+          credits: {
+            includedUsd: null, includedBalanceUsd: null, purchasedUsd: 2,
+            session: { remainingPercent: 80, resetsAt: sessionReset },
+            weekly: { remainingPercent: 70, resetsAt: weeklyReset },
+          },
+          error: null,
+        }],
+      });
+      assert.deepEqual(lines[1].split(/\s{2,}/), [
+        "Sub", "5h used", "5h resets in", "Weekly used", "Weekly resets in", "Credits",
+      ]);
+      assert.deepEqual(lines[3].split(/\s{2,}/), [
+        "countdown", "▰▰▱▱▱▱▱▱ 20% 7 reqs", sessionText,
+        "▰▰▱▱▱▱▱▱ 30% 7 reqs", weeklyText, "purchased $2.00",
+      ]);
+    }
   });
 
   it("shows the no-subscriptions message for an empty list", () => {
