@@ -180,23 +180,18 @@ export async function fetchUsageSubs(
   return parseUsageSubscriptions(body);
 }
 
-/** Legacy-plan window line: the dashboard's own remaining % (used = 100-remaining). */
-function formatQuotaLine(label: string, quota: WindowQuota, requests: number | null): string {
-  const remaining = quota.remainingPercent ?? 0;
-  const used = Math.min(100, Math.max(0, 100 - remaining));
-  const resets = quota.resetsAt ? ` · resets ${quota.resetsAt}` : "";
-  const reqs = requests != null ? ` · ${requests.toLocaleString("en-US")} reqs` : "";
-  return `${label}: ${usageGauge(used)} ${Math.round(used)}% used${reqs}${resets}`;
-}
-
-function formatWindowLine(label: string, window: WindowUsage, quota: WindowQuota | null): string {
+/** Window cell for the /usage-subs table, in /usage's gauge-or-absolute discipline. */
+function formatWindowCell(window: WindowUsage, quota: WindowQuota | null): string {
   const usage = window.usageUsd ?? 0;
   const requests = window.requests ?? 0;
-  const tokens = (window.inputTokens ?? 0) + (window.outputTokens ?? 0);
 
+  // Legacy-plan dashboard quota wins: remaining % (used = 100 - remaining).
   if (quota != null && quota.remainingPercent != null) {
-    return formatQuotaLine(label, quota, requests);
+    const used = Math.min(100, Math.max(0, 100 - quota.remainingPercent));
+    return `${usageGauge(used)} ${Math.round(used)}% ${requests.toLocaleString("en-US")} reqs`;
   }
+
+  const tokens = (window.inputTokens ?? 0) + (window.outputTokens ?? 0);
 
   if (window.limitUsd != null) {
     const limit = window.limitUsd;
@@ -206,13 +201,19 @@ function formatWindowLine(label: string, window: WindowUsage, quota: WindowQuota
         : usage > 0
           ? 100
           : 0;
-    return `${label}: ${usageGauge(percent)} ${Math.round(percent)}% · $${usage.toFixed(2)} / $${limit.toFixed(2)}`;
+    return `${usageGauge(percent)} $${usage.toFixed(2)} / $${limit.toFixed(2)}`;
   }
 
-  return `${label}: $${usage.toFixed(2)} / ${requests.toLocaleString("en-US")} reqs / ${tokens.toLocaleString("en-US")} tokens`;
+  return `${requests.toLocaleString("en-US")} reqs · ${tokens.toLocaleString("en-US")} tok`;
 }
 
-function formatCreditsLine(credits: SubscriptionCredits): string | null {
+/** UTC resets cell in compact form (“10-14T15:00”); null-safe. */
+function formatResetsCell(quota: WindowQuota | null): string {
+  const resetsAt = quota?.resetsAt ?? null;
+  return resetsAt ? resetsAt.slice(5, 16).replace("T", " ") : "-";
+}
+
+function creditsCell(credits: SubscriptionCredits): string | null {
   const parts: string[] = [];
   if (credits.includedUsd != null) {
     parts.push(`included $${credits.includedUsd.toFixed(2)}`);
@@ -223,36 +224,44 @@ function formatCreditsLine(credits: SubscriptionCredits): string | null {
   if (credits.purchasedUsd != null) {
     parts.push(`purchased $${credits.purchasedUsd.toFixed(2)}`);
   }
-  return parts.length > 0 ? `Credits: ${parts.join(" · ")}` : null;
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-/** Renders the per-subscription usage block returned by fetchUsageSubs. */
+/**
+ * Renders the per-subscription usage as an aligned fixed-width table in the
+ * /usage command's discipline: padded header row, "-" separator, no totals row
+ * (subscriptions are separate accounts). Error subscriptions render their
+ * `(error: ...)` in the first window cell with dashes elsewhere.
+ */
 export function formatUsageSubsLines(data: UsageSubscriptions): string[] {
   const lines: string[] = [];
   const generatedAt = data.generatedAt ?? "-";
-  lines.push(`Usage subscriptions (generated at ${generatedAt}):`);
+  lines.push(`Usage subscriptions (generated at ${generatedAt}, UTC):`);
 
   if (data.subscriptions.length === 0) {
     lines.push("(no subscriptions returned)");
     return lines;
   }
 
-  for (const sub of data.subscriptions) {
-    const planSuffix = sub.plan ? ` (${sub.plan})` : "";
-    lines.push(`Subscription: ${sub.name}${planSuffix}`);
+  const header = ["Sub", "5h used", "5h resets (UTC)", "Weekly used", "Weekly resets (UTC)", "Credits"];
+  const rows = data.subscriptions.map((sub) => [
+    sub.plan ? `${sub.name} (${sub.plan})` : sub.name,
+    sub.error ? `(error: ${sub.error})` : formatWindowCell(sub.session5h, sub.credits.session),
+    sub.error ? "-" : formatResetsCell(sub.credits.session),
+    sub.error ? "-" : formatWindowCell(sub.weekly, sub.credits.weekly),
+    sub.error ? "-" : formatResetsCell(sub.credits.weekly),
+    sub.error ? "-" : creditsCell(sub.credits) ?? "-",
+  ]);
 
-    if (sub.error) {
-      lines.push(`  Error: ${sub.error}`);
-      continue;
-    }
+  const width = header.map((_, i) =>
+    Math.max(header[i].length, ...rows.map((row) => row[i].length)));
+  const renderRow = (cells: string[]): string =>
+    cells.map((cell, i) => cell.padEnd(width[i])).join("  ").trimEnd();
 
-    lines.push(`  ${formatWindowLine("5h", sub.session5h, sub.credits.session)}`);
-    lines.push(`  ${formatWindowLine("Weekly", sub.weekly, sub.credits.weekly)}`);
-    const credits = formatCreditsLine(sub.credits);
-    if (credits) {
-      lines.push(`  ${credits}`);
-    }
+  lines.push(renderRow(header));
+  lines.push("-".repeat(renderRow(header).length));
+  for (const row of rows) {
+    lines.push(renderRow(row));
   }
-
   return lines;
 }

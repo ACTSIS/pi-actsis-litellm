@@ -207,13 +207,20 @@ describe("formatUsageSubsLines", () => {
         },
       ],
     });
-    assert.match(lines[0], /Usage subscriptions \(generated at 2026-10-14T12:00:00Z\):/);
-    assert.ok(lines.some((l) => l.includes("Subscription: alpha (Pro)")));
-    assert.ok(lines.some((l) => /5h: .* 50% · \$5\.00 \/ \$10\.00/.test(l)));
-    assert.ok(lines.some((l) => /Weekly: .* 40% · \$20\.00 \/ \$50\.00/.test(l)));
+    assert.match(lines[0], /Usage subscriptions \(generated at 2026-10-14T12:00:00Z, UTC\):/);
+    assert.ok(/^-+$/.test(lines[2]), `separator: ${lines[2]}`);
+    assert.ok(
+      lines[1].includes("Sub") && lines[1].includes("5h used") && lines[1].includes("Credits"),
+      `header: ${lines[1]}`,
+    );
+    assert.ok(
+      lines.some((l) => l.includes("alpha (Pro)") && /\$5\.00 \/ \$10\.00/.test(l)),
+      lines.join("\n"),
+    );
+    assert.ok(lines.some((l) => /\$20\.00 \/ \$50\.00/.test(l)));
     assert.ok(
       lines.some((l) =>
-        /Credits: included \$100\.00 · balance \$80\.00 · purchased \$20\.00/.test(l),
+        l.includes("included $100.00 · balance $80.00 · purchased $20.00"),
       ),
     );
   });
@@ -254,11 +261,10 @@ describe("formatUsageSubsLines", () => {
         },
       ],
     });
-    assert.ok(lines.some((l) => l.includes("Subscription: beta")));
-    assert.ok(!lines.some((l) => l.includes("(beta)")));
-    assert.ok(lines.some((l) => /5h: \$3\.50 \/ 5 reqs \/ 300 tokens/.test(l)));
-    assert.ok(lines.some((l) => /Weekly: \$14\.00 \/ 50 reqs \/ 3,000 tokens/.test(l)));
-    assert.ok(!lines.some((l) => l.includes("Credits:")));
+    assert.ok(lines.some((l) => /\bbeta\b/.test(l)), lines.join("\n"));
+    assert.ok(lines.some((l) => /5 reqs · 300 tok/.test(l)), lines.join("\n"));
+    assert.ok(lines.some((l) => /50 reqs · 3,000 tok/.test(l)));
+    assert.ok(!lines.some((l) => l.includes("included $")));
   });
 
   it("renders the per-subscription error instead of numeric lines", () => {
@@ -297,11 +303,12 @@ describe("formatUsageSubsLines", () => {
         },
       ],
     });
-    assert.ok(lines.some((l) => l.includes("Subscription: gamma (Basic)")));
-    assert.ok(lines.some((l) => l.includes("Error: upstream rate limit exceeded")));
-    assert.ok(!lines.some((l) => l.includes("5h:")));
-    assert.ok(!lines.some((l) => l.includes("Weekly:")));
-    assert.ok(!lines.some((l) => l.includes("Credits:")));
+    assert.ok(lines.some((l) => l.includes("gamma (Basic)")), lines.join("\n"));
+    assert.ok(
+      lines.some((l) => l.includes("(error: upstream rate limit exceeded)")),
+      lines.join("\n"),
+    );
+    assert.ok(!lines.some((l) => l.includes("included $")));
   });
 
   it("renders the legacy quota gauge and resets from remaining_percent", () => {
@@ -340,10 +347,14 @@ describe("formatUsageSubsLines", () => {
         },
       ],
     });
-    // Used = 100 - remaining (85.47 -> ~15%).
-    assert.ok(lines.some((l) => /5h: .*15% used.*642 reqs.*resets 2026-10-14T15:00:00Z/.test(l)), lines.join("\n"));
-    assert.ok(lines.some((l) => /Weekly: .*12% used.*15,740 reqs.*resets 2026-10-19T00:00:00Z/.test(l)), lines.join("\n"));
-    assert.ok(lines.some((l) => /Credits: purchased \$0\.00/.test(l)));
+    // One table row carries both windows and their resets (used = 100 - remaining:
+    // 85.47 -> ~15%, 88.15 -> ~12%); padded columns collapse to \s+ in patterns.
+    assert.ok(
+      lines.some((l) =>
+        /legacy\s+.*15% 642 reqs\s+10-14 15:00\s+.*12% 15,740 reqs\s+10-19 00:00\s+purchased \$0\.00/.test(l),
+      ),
+      lines.join("\n"),
+    );
   });
 
   it("shows the no-subscriptions message for an empty list", () => {
@@ -485,10 +496,13 @@ describe("buildUsageSubsHandler", () => {
       const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
       assert.equal(notifications.length, 1);
       assert.equal(notifications[0].level, "info");
-      assert.ok(notifications[0].message.includes("Subscription: alpha (Pro)"));
-      assert.ok(notifications[0].message.includes("5h:"));
-      assert.ok(notifications[0].message.includes("Weekly:"));
-      assert.ok(notifications[0].message.includes("Credits:"));
+      assert.ok(notifications[0].message.includes("alpha (Pro)"));
+      assert.ok(notifications[0].message.includes("5h used"));
+      // sampleBody carries the legacy session quota: the 5h cell renders
+      // remaining-based gauge (100-85.47 -> 15%, requests: 12), not limitUsd.
+      assert.ok(notifications[0].message.includes("15% 12 reqs"));
+      assert.ok(notifications[0].message.includes("$20.00 / $50.00"));
+      assert.ok(notifications[0].message.includes("included $100.00"));
     } finally {
       recorder.restore();
     }
