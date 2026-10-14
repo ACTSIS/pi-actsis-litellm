@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — usage-subs (Ollama Cloud per-subscription windows)
+## 0.5.0 — 2026-10-14 — Paired release with opencode-actsis-litellm
 
 - **`/usage-subs` command** — per-subscription Ollama Cloud window usage as
   the provider's dashboard: remaining % of the 5h/weekly windows with reset
@@ -14,6 +14,8 @@
   requires an upstream pi-coding-agent release (1.x changes the typing
   surface and is out of proportion for this advisory). Documented
   exception with tests green.
+- **Dependency audit:** npm-level clean via override; the installed pi
+  runtime ships the patched `brace-expansion@5.0.12`.
 
 ## 0.4.0 — 2026-10-13 — Paired release with opencode-actsis-litellm
 
