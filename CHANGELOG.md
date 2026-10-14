@@ -7,6 +7,13 @@
   times and credits, aggregados por el collector del gateway.
 - Tabular render in the /usage table discipline with threshold-colored
   gauges (green/yellow/orange/red), ANSI-safe padding.
+- **Dependency audit note:** the installed pi runtime already ships the
+  patched `brace-expansion@5.0.12`; the repo dev tree keeps a bundled
+  `5.0.9` inside `pi-coding-agent@0.87.1`'s tarball (it ships prebuilt
+  nested node_modules that npm overrides cannot replace) — resolving it
+  requires an upstream pi-coding-agent release (1.x changes the typing
+  surface and is out of proportion for this advisory). Documented
+  exception with tests green.
 
 ## 0.4.0 — 2026-10-13 — Paired release with opencode-actsis-litellm
 
