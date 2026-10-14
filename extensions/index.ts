@@ -15,6 +15,7 @@ import {
   buildModelsCommandHandler,
   buildLogoutHandler,
   buildUsageHandler,
+  buildUsageSubsHandler,
   defaultCommandDeps,
   extractUsableApiKey,
   buildTopHandler,
@@ -408,6 +409,12 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     description:
       "Show per-model usage (spend/tokens/requests); args: [days] or 'YYYY-MM-DD .. YYYY-MM-DD'",
     handler: buildUsageHandler(commandDeps),
+  });
+
+  pi.registerCommand("actsis-litellm:usage-subs", {
+    description:
+      "Show per-subscription Ollama Cloud usage (5h rolling + weekly)",
+    handler: buildUsageSubsHandler(commandDeps),
   });
 
   pi.registerCommand("actsis-litellm:logout", {
