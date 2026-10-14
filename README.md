@@ -61,6 +61,7 @@ The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **A
 | `/actsis-litellm:status` | Show provider registration, credential state and source, catalog count, cache age, gateway URL, and a budget summary (stored credentials). |
 | `/actsis-litellm:models` | Force a fresh model catalog sync and show added/removed models. |
 | `/actsis-litellm:usage` | Show per-model usage (spend, tokens, requests). Args: nothing (last 30 days), a day count like `14`, or a range like `2025-03-01 .. 2025-03-31`. |
+| `/actsis-litellm:usage-subs` | Show Ollama Cloud per-subscription window usage (dashboard-style remaining % of the 5-hour and weekly windows, resets, credits), in the /usage table style with threshold-colored bars. Args: none. |
 | `/actsis-litellm:logout` | Revoke the OAuth refresh token on the gateway and clear local credentials and cache. |
 | `/actsis-litellm:budget` | Force a budget refresh and report the outcome as a notification. |
 
@@ -155,6 +156,32 @@ Total                    $1.2345   89.0k   210
 - **Gateway requests footnote:** the table ends with a `Gateway requests:` line from `GET {gateway}/gateway/daily/activity` (successful + failed). The dashboard's Total Requests card comes from these gateway-answered counts, which include traffic not logged in the spend tables (audio, passthrough) — that's why they differ from the table's per-model `Reqs` column (upstream attempts, chat-completions only).
 - **Caveat:** LiteLLM only calculates spend for OpenAI-compatible `/v1/chat/completions` traffic; `/v1/messages` (Anthropic format), passthrough, and unlogged requests report zero or are absent.
 - **Permission errors:** `401` maps to "run /login again"; `403` means the credential lacks the spend/usage routes permission (admin action, re-login does not fix it).
+
+## Per-subscription usage (`/actsis-litellm:usage-subs`)
+
+Shows the org's Ollama Cloud subscription consumption exactly as the
+provider's admin dashboard: **remaining %** of the 5-hour window and the
+weekly window per subscription, with reset times and credits, aggregated by
+the gateway's usage-subs collector (one `GET /ollama-usage`). Rendered as an
+aligned table with threshold-colored bars (green ≤ 50%, yellow 51-75%,
+orange 76-90%, red > 90% of used):
+
+```text
+Usage subscriptions (generated at 2026-10-14T14:56:11Z, UTC):
+Sub  5h used                5h resets (UTC)  Weekly used               Weekly resets (UTC)  Credits
+---------------------------------------------------------------------------------------------------
+0    ▰▱▱▱▱▱▱▱ 18% 732 reqs  10-14 15:00      ▰▱▱▱▱▱▱▱ 12% 15,830 reqs  10-19 00:00          purchased $0.00
+1    ▰▰▱▱▱▱▱▱ 19% 754 reqs  10-14 15:00      ▰▱▱▱▱▱▱▱ 13% 18,589 reqs  10-19 00:00          purchased $0.00
+```
+
+- **Source of truth:** the provider's documented balance API (legacy plans
+  expose per-window `remaining_percent` + `resets_at`; credit plans expose
+  included/purchased USD instead).
+- **One failing subscription does not block the rest:** its row shows
+  `(error: …)` and the others are served normally.
+- **Scaling:** adding a subscription is one env var in the gateway
+  (`OLLAMA_CLOUD_KEY_<suffix>`) plus a collector reload; this extension does
+  not change.
 
 ## Top models widget (TUI)
 

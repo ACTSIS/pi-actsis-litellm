@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — usage-subs (Ollama Cloud per-subscription windows)
+
+- **`/usage-subs` command** — per-subscription Ollama Cloud window usage as
+  the provider's dashboard: remaining % of the 5h/weekly windows with reset
+  times and credits, aggregados por el collector del gateway.
+- Tabular render in the /usage table discipline with threshold-colored
+  gauges (green/yellow/orange/red), ANSI-safe padding.
+
 ## 0.4.0 — 2026-10-13 — Paired release with opencode-actsis-litellm
 
 Version numbers now move in lockstep with the sister OpenCode plugin
