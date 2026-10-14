@@ -237,10 +237,19 @@ function formatWindowCell(window: WindowUsage, quota: WindowQuota | null, color:
   return `${requests.toLocaleString("en-US")} reqs · ${tokens.toLocaleString("en-US")} tok`;
 }
 
-/** UTC resets cell in compact form (“10-14T15:00”); null-safe. */
-function formatResetsCell(quota: WindowQuota | null): string {
-  const resetsAt = quota?.resetsAt ?? null;
-  return resetsAt ? resetsAt.slice(5, 16).replace("T", " ") : "-";
+/** Remaining reset duration, rounded up to the window's smallest displayed unit. */
+function formatResetsCell(quota: WindowQuota | null, weekly: boolean, now: number): string {
+  const resetsAt = quota?.resetsAt;
+  if (!resetsAt) return "-";
+  const reset = Date.parse(resetsAt);
+  if (!Number.isFinite(reset)) return "-";
+  const remaining = Math.max(0, reset - now);
+  if (weekly) {
+    const hours = Math.ceil(remaining / 3_600_000);
+    return `${Math.floor(hours / 24)} d ${hours % 24} h`;
+  }
+  const minutes = Math.ceil(remaining / 60_000);
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 
 function creditsCell(credits: SubscriptionCredits): string | null {
@@ -273,6 +282,7 @@ export function formatUsageSubsLines(
   options: { color?: boolean } = {},
 ): string[] {
   const color = options.color === true;
+  const now = Date.now();
   const lines: string[] = [];
   const generatedAt = data.generatedAt ?? "-";
   lines.push(`Usage subscriptions (generated at ${generatedAt}, UTC):`);
@@ -282,13 +292,13 @@ export function formatUsageSubsLines(
     return lines;
   }
 
-  const header = ["Sub", "5h used", "5h resets (UTC)", "Weekly used", "Weekly resets (UTC)", "Credits"];
+  const header = ["Sub", "5h used", "5h resets in", "Weekly used", "Weekly resets in", "Credits"];
   const rows = data.subscriptions.map((sub) => [
     sub.plan ? `${sub.name} (${sub.plan})` : sub.name,
     sub.error ? `(error: ${sub.error})` : formatWindowCell(sub.session5h, sub.credits.session, color),
-    sub.error ? "-" : formatResetsCell(sub.credits.session),
+    sub.error ? "-" : formatResetsCell(sub.credits.session, false, now),
     sub.error ? "-" : formatWindowCell(sub.weekly, sub.credits.weekly, color),
-    sub.error ? "-" : formatResetsCell(sub.credits.weekly),
+    sub.error ? "-" : formatResetsCell(sub.credits.weekly, true, now),
     sub.error ? "-" : creditsCell(sub.credits) ?? "-",
   ]);
 
