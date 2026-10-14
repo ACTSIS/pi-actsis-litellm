@@ -41,3 +41,5 @@ querying the gateway's `/ollama-usage` pass-through. Contract lives in
   Render rewritten as the /usage-style table (S3 updated).- L6: gauges colored by used% thresholds (green/yellow/orange/red truecolor,
   opt-in {color:true}; /usage-subs opts in). Padding strips ANSI for width.
   Commit logged next entry.
+- L7: delivered via PR https://github.com/ACTSIS/pi-actsis-litellm/pull/21, merge
+  c24dcec to main (feat/usage-subs 7079ce1→1afdcf1→97f8ba2).
