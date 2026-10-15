@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 — 2026-10-15 — Paired release with opencode-actsis-litellm
 
 - **Fixed: window pace silently disabled** — live collector data sends
   `from`/`until` with `until ≈ generation time` (a closed measurement range);
