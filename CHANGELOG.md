@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.1 — Unreleased
+## 0.6.1 — 2026-10-15 — Paired release with opencode-actsis-litellm
 
 - **Window pace correlation in `/usage-subs`** — the colored gauge now takes the
   window's elapsed time into account: when consumption runs ahead of the window
