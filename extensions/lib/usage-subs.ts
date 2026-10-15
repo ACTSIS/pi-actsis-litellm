@@ -24,6 +24,77 @@ function gaugeColorAnsi(usedPercent: number): string {
   return `\x1b[${color}m`;
 }
 
+/** Fixed window lengths of the Ollama subscription quotas. */
+const SESSION_WINDOW_MS = 5 * 3_600_000;
+const WEEK_WINDOW_MS = 7 * 24 * 3_600_000;
+/**
+ * Pace projection tuning: a just-started window would otherwise divide by a
+ * near-zero elapsed span and explode the projection, so elapsed% never goes
+ * below this floor; the linear projection itself caps at 200%.
+ */
+const MIN_ELAPSED_PERCENT = 10;
+const MAX_PROJECTED_PERCENT = 200;
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+/**
+ * Percent of the usage window that has already elapsed, or null when unknown.
+ *
+ * Explicit window bounds (`from`/`until`) win over quota resets because they
+ * describe the exact measured window; without them, the quota reset instant
+ * against the fixed window length yields the elapsed span. Callers pair this
+ * with the used% of the same window to derive the consumption pace.
+ */
+function windowElapsedPercent(
+  window: WindowUsage,
+  quota: WindowQuota | null,
+  weekly: boolean,
+  now: number,
+): number | null {
+  const from = window.from ? Date.parse(window.from) : NaN;
+  const until = window.until ? Date.parse(window.until) : NaN;
+  if (Number.isFinite(from) && Number.isFinite(until) && until > from) {
+    return clampPercent(((now - from) / (until - from)) * 100);
+  }
+  const resetsAt = quota?.resetsAt;
+  if (!resetsAt) return null;
+  const reset = Date.parse(resetsAt);
+  if (!Number.isFinite(reset)) return null;
+  const length = weekly ? WEEK_WINDOW_MS : SESSION_WINDOW_MS;
+  return clampPercent(((length - Math.max(0, reset - now)) / length) * 100);
+}
+
+/**
+ * Consumption pace: used% over elapsed% (floored), or null when the elapsed
+ * span is unknown, so callers skip both escalation and projection.
+ */
+function paceOverElapsed(
+  usedPercent: number,
+  elapsedPercent: number | null,
+): number | null {
+  if (elapsedPercent == null) return null;
+  return usedPercent / Math.max(elapsedPercent, MIN_ELAPSED_PERCENT);
+}
+
+/** Used% remapped into the next band below it so the color escalates one step. */
+function escalatedUsedPercent(usedPercent: number, aheadOfPace: boolean): number {
+  if (!aheadOfPace) return usedPercent;
+  return usedPercent <= 50 ? 51
+    : usedPercent <= 75 ? 76
+    : usedPercent <= 90 ? 91
+    : usedPercent;
+}
+
+/** " → N%" linear projection at the window's end, only when running ahead. */
+function paceProjectionSuffix(usedPercent: number, elapsedPercent: number | null): string {
+  const pace = paceOverElapsed(usedPercent, elapsedPercent);
+  if (pace == null || pace <= 1) return "";
+  const projected = Math.min(MAX_PROJECTED_PERCENT, Math.round(pace * 100));
+  return ` → ${projected}%`;
+}
+
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 
 function visibleLength(cell: string): number {
@@ -209,16 +280,31 @@ export async function fetchUsageSubs(
   return parseUsageSubscriptions(body);
 }
 
-/** Window cell for the /usage-subs table, in /usage's gauge-or-absolute discipline. */
-function formatWindowCell(window: WindowUsage, quota: WindowQuota | null, color: boolean): string {
+/**
+ * Window cell for the /usage-subs table, in /usage's gauge-or-absolute discipline.
+ * `weekly` selects the known quota window length; `now` anchors the elapsed
+ * span against the reset instants and window bounds.
+ */
+function formatWindowCell(
+  window: WindowUsage,
+  quota: WindowQuota | null,
+  weekly: boolean,
+  color: boolean,
+  now: number,
+): string {
   const usage = window.usageUsd ?? 0;
   const requests = window.requests ?? 0;
+  const elapsed = windowElapsedPercent(window, quota, weekly, now);
 
   // Legacy-plan dashboard quota wins: remaining % (used = 100 - remaining).
   if (quota != null && quota.remainingPercent != null) {
-    const used = Math.min(100, Math.max(0, 100 - quota.remainingPercent));
-    const run = `${usageGauge(used)} ${Math.round(used)}% ${requests.toLocaleString("en-US")} reqs`;
-    return color ? `${gaugeColorAnsi(used)}${run}\x1b[2;39m` : run;
+    const used = clampPercent(100 - quota.remainingPercent);
+    const pace = paceOverElapsed(used, elapsed);
+    const ahead = pace != null && pace > 1;
+    const run = `${usageGauge(used)} ${Math.round(used)}%${paceProjectionSuffix(used, elapsed)} ${requests.toLocaleString("en-US")} reqs`;
+    return color
+      ? `${gaugeColorAnsi(escalatedUsedPercent(used, ahead))}${run}\x1b[2;39m`
+      : run;
   }
 
   const tokens = (window.inputTokens ?? 0) + (window.outputTokens ?? 0);
@@ -227,12 +313,16 @@ function formatWindowCell(window: WindowUsage, quota: WindowQuota | null, color:
     const limit = window.limitUsd;
     const percent =
       limit > 0
-        ? Math.min(100, Math.max(0, (usage / limit) * 100))
+        ? clampPercent((usage / limit) * 100)
         : usage > 0
           ? 100
           : 0;
-    const run = `${usageGauge(percent)} $${usage.toFixed(2)} / $${limit.toFixed(2)}`;
-    return color ? `${gaugeColorAnsi(percent)}${run}\x1b[2;39m` : run;
+    const pace = paceOverElapsed(percent, elapsed);
+    const ahead = pace != null && pace > 1;
+    const run = `${usageGauge(percent)} $${usage.toFixed(2)} / $${limit.toFixed(2)}${paceProjectionSuffix(percent, elapsed)}`;
+    return color
+      ? `${gaugeColorAnsi(escalatedUsedPercent(percent, ahead))}${run}\x1b[2;39m`
+      : run;
   }
 
   return `${requests.toLocaleString("en-US")} reqs · ${tokens.toLocaleString("en-US")} tok`;
@@ -274,9 +364,11 @@ function creditsCell(credits: SubscriptionCredits): string | null {
  * `(error: ...)` in the first window cell with dashes elsewhere.
  *
  * With `{color: true}` the gauge cells carry ANSI truecolor thresholds
- * (green/yellow/orange/red over used%) and run through terminals fine: the
- * notify path supports embedded SGR and the width math strips it. Padding is
- * measured on visible length so colored cells stay aligned.
+ * (green/yellow/orange/red over used%, escalated one level and paired with a
+ * linear projection suffix when consumption runs ahead of the elapsed window)
+ * and run through terminals fine: the notify path supports embedded SGR and
+ * the width math strips it. Padding is measured on visible length so colored
+ * cells stay aligned.
  */
 export function formatUsageSubsLines(
   data: UsageSubscriptions,
@@ -296,9 +388,9 @@ export function formatUsageSubsLines(
   const header = ["Sub", "5h used", "5h resets in", "Weekly used", "Weekly resets in", "Credits"];
   const rows = data.subscriptions.map((sub) => [
     sub.plan ? `${sub.name} (${sub.plan})` : sub.name,
-    sub.error ? `(error: ${sub.error})` : formatWindowCell(sub.session5h, sub.credits.session, color),
+    sub.error ? `(error: ${sub.error})` : formatWindowCell(sub.session5h, sub.credits.session, false, color, now),
     sub.error ? "-" : formatResetsCell(sub.credits.session, false, now),
-    sub.error ? "-" : formatWindowCell(sub.weekly, sub.credits.weekly, color),
+    sub.error ? "-" : formatWindowCell(sub.weekly, sub.credits.weekly, true, color, now),
     sub.error ? "-" : formatResetsCell(sub.credits.weekly, true, now),
     sub.error ? "-" : creditsCell(sub.credits) ?? "-",
   ]);

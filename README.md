@@ -61,7 +61,7 @@ The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **A
 | `/actsis-litellm:status` | Show provider registration, credential state and source, catalog count, cache age, gateway URL, and a budget summary (stored credentials). |
 | `/actsis-litellm:models` | Force a fresh model catalog sync and show added/removed models. |
 | `/actsis-litellm:usage` | Show per-model usage (spend, tokens, requests). Args: nothing (last 30 days), a day count like `14`, or a range like `2025-03-01 .. 2025-03-31`. |
-| `/actsis-litellm:usage-subs` | Show Ollama Cloud per-subscription window usage (dashboard-style remaining % of the 5-hour and weekly windows, reset countdowns, credits), in the /usage table style with threshold-colored bars. Args: none. |
+| `/actsis-litellm:usage-subs` | Show Ollama Cloud per-subscription window usage (dashboard-style remaining % of the 5-hour and weekly windows, reset countdowns, credits), in the /usage table style with threshold-colored bars correlated to the elapsed window (pace escalation + projection when consumption runs ahead). Args: none. |
 | `/actsis-litellm:logout` | Revoke the OAuth refresh token on the gateway and clear local credentials and cache. |
 | `/actsis-litellm:budget` | Force a budget refresh and report the outcome as a notification. |
 
@@ -179,7 +179,8 @@ provider's admin dashboard: **remaining %** of the 5-hour window and the
 weekly window per subscription, with reset countdowns and credits, aggregated by
 the gateway's usage-subs collector (one `GET /ollama-usage`). Rendered as an
 aligned table with threshold-colored bars (green ≤ 50%, yellow 51-75%,
-orange 76-90%, red > 90% of used):
+orange 76-90%, red > 90% of used), correlated with how much of the window has
+already elapsed:
 
 ```text
 Usage subscriptions (generated at 2026-10-14 09:56 (America/Bogota, GMT-05:00)):
@@ -193,6 +194,15 @@ Sub  5h used                5h resets in  Weekly used               Weekly reset
   hours/minutes for the 5-hour window, days/hours for the weekly window.
   Positive durations round up to the next minute or hour respectively;
   elapsed resets show zero, and missing or invalid timestamps show `-`.
+- **Window pace:** colors compare used% against elapsed-window% instead of
+  judging the raw percentage alone. When consumption runs ahead of the window
+  (pace = used% / elapsed% > 1, with elapsed floored at 10% so a just-started
+  window cannot explode the ratio), the color escalates one threshold level and
+  the cell appends the linear projection of used% at the window's end
+  (`15% → 150%`, capped at 200%). On pace or under pace, the cells keep the
+  absolute-threshold colors; when the provider gives no window bounds (no
+  `from`/`until` and no reset instant), no correlation is possible and the raw
+  threshold color stands.
 - **Source of truth:** the provider's documented balance API (legacy plans
   expose per-window `remaining_percent` + `resets_at`; credit plans expose
   included/purchased USD instead).

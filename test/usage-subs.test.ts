@@ -454,7 +454,8 @@ describe("formatUsageSubsLines colors", () => {
     assert.ok(gaugeCell(red, "5h").includes(RED), red.join("\n"));
   });
 
-  it("emits no ANSI by default (color off) and keeps columns aligned with color on", () => {
+  it("emits no ANSI by default (color off) and keeps columns aligned with color on", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
     const plain = formatUsageSubsLines(quotaSubs(85, 90));
     assert.ok(!plain.some((l) => l.includes("\x1b[")), plain.join("\n"));
     const colored = formatUsageSubsLines(quotaSubs(85, 90), { color: true });
@@ -466,6 +467,126 @@ describe("formatUsageSubsLines colors", () => {
     const rowVisible = row.replace(/\x1b\[[0-9;]*m/g, "");
     assert.ok(visible(coloredHeader).length === rowVisible.replace(/\s+$/, "").length || true);
     assert.ok(headerCells.length >= 5);
+  });
+});
+
+describe("formatUsageSubsLines window pace", () => {
+  const GREEN = "\x1b[38;2;34;197;94m";
+  const YELLOW = "\x1b[38;2;234;179;8m";
+
+  /** Quota subscription with per-window reset instants for pace control. */
+  function pacedQuotaSubs(
+    sessionRemaining: number,
+    sessionResetsAt: string,
+  ): UsageSubscriptions {
+    return {
+      generatedAt: "2026-10-14T12:00:00Z",
+      subscriptions: [
+        {
+          name: "paced",
+          plan: null,
+          session5h: {
+            usageUsd: null, limitUsd: null, requests: 40,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          weekly: {
+            usageUsd: null, limitUsd: null, requests: 40,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          credits: {
+            includedUsd: null, includedBalanceUsd: null, purchasedUsd: 0,
+            session: { remainingPercent: sessionRemaining, resetsAt: sessionResetsAt },
+            weekly: null,
+          },
+          error: null,
+        },
+      ],
+    };
+  }
+
+  it("escalates the color and projects when usage runs ahead of the window", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
+    // remainingPercent 85 -> used 15; reset at 16:30 leaves 4.5h of the 5h window: elapsed 10% (floor), pace 1.5.
+    const colored = formatUsageSubsLines(pacedQuotaSubs(85, "2026-10-14T16:30:00Z"), { color: true });
+    const row = colored.find((l) => l.startsWith("paced"));
+    assert.ok(row != null, "row found");
+    assert.ok(row.includes(YELLOW), `escalated to yellow: ${row}`);
+    assert.ok(/15% → 150%/.test(row.replace(/\x1b\[[0-9;]*m/g, "")), `projection: ${row}`);
+  });
+
+  it("shows no projection and keeps the base color when usage is on or under pace", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
+    // Reset at 15:00 leaves 3h: elapsed 40%; used 15% -> pace 0.375.
+    const lines = formatUsageSubsLines(pacedQuotaSubs(85, "2026-10-14T15:00:00Z"), { color: true });
+    const row = lines.find((l) => l.startsWith("paced"));
+    assert.ok(row != null, "row found");
+    assert.ok(row.includes(GREEN), `base green kept: ${row}`);
+    assert.ok(!row.includes("→"), `no projection: ${row}`);
+  });
+
+  it("projects from explicit window bounds and caps the projection for the dollar path", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
+    // Window 11:55-16:55: elapsed 1.67% -> floored to 10%; used 50% -> pace 5,
+    // projection capped at 200%.
+    const lines = formatUsageSubsLines({
+      generatedAt: null,
+      subscriptions: [
+        {
+          name: "dollar",
+          plan: null,
+          session5h: {
+            usageUsd: 5.0, limitUsd: 10.0, requests: 8,
+            inputTokens: null, outputTokens: null,
+            from: "2026-10-14T11:55:00Z", until: "2026-10-14T16:55:00Z",
+          },
+          weekly: {
+            usageUsd: 20.0, limitUsd: 50.0, requests: 80,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          credits: {
+            includedUsd: null, includedBalanceUsd: null, purchasedUsd: 0,
+            session: null, weekly: null,
+          },
+          error: null,
+        },
+      ],
+    }, { color: true });
+    const row = lines.find((l) => l.startsWith("dollar"));
+    assert.ok(row != null, "row found");
+    const visible = row.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.ok(/\$5\.00 \/ \$10\.00 → 200%/.test(visible), `projection: ${visible}`);
+    assert.ok(row.includes(YELLOW), `escalated to yellow: ${row}`);
+  });
+
+  it("omits the projection when no window boundary is known", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
+    const lines = formatUsageSubsLines({
+      generatedAt: null,
+      subscriptions: [
+        {
+          name: "opaque",
+          plan: null,
+          session5h: {
+            usageUsd: 5.0, limitUsd: 10.0, requests: 8,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          weekly: {
+            usageUsd: 2.0, limitUsd: 50.0, requests: 8,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          credits: {
+            includedUsd: null, includedBalanceUsd: null, purchasedUsd: 0,
+            session: null, weekly: null,
+          },
+          error: null,
+        },
+      ],
+    }, { color: true });
+    const row = lines.find((l) => l.startsWith("opaque"));
+    assert.ok(row != null, "row found");
+    const visible = row.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.ok(/\$5\.00 \/ \$10\.00(?! →)/.test(visible), `no projection: ${visible}`);
+    assert.ok(row.includes(GREEN), `base green kept: ${row}`);
   });
 });
 
