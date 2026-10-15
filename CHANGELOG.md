@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0 — 2026-10-15 — Paired release with opencode-actsis-litellm
+
+- **Friendly reset countdowns in `/usage-subs`** — the 5h window now shows the
+  remaining reset time as hours/minutes (`2 h 35 min`) and the weekly window as
+  days/hours (`3 d 8 h`), instead of absolute reset timestamps. Durations round
+  up to the displayed unit; expired resets show zero and missing/invalid
+  timestamps show `-`.
+- **System timezone for visible timestamps** — subscription generation,
+  credential expiry, budget resets and rate-limit resets render in the host
+  system timezone with local date, 24-hour clock, IANA zone name and UTC offset
+  (`2026-10-14 09:56 (America/Bogota, GMT-05:00)`), including daylight-saving
+  changes. No timezone configuration is required.
+- **UTC query ranges labelled explicitly** — `/usage` and the Top models widget
+  keep their existing UTC date-range calculations and totals, now labelled as
+  UTC days. Reset countdowns and cache ages remain timezone-independent
+  durations.
+
 ## 0.5.0 — 2026-10-14 — Paired release with opencode-actsis-litellm
 
 - **`/usage-subs` command** — per-subscription Ollama Cloud window usage as
