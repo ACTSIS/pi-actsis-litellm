@@ -200,8 +200,9 @@ Sub  5h used                5h resets in  Weekly used               Weekly reset
   window cannot explode the ratio), the color escalates one threshold level and
   the cell appends the linear projection of used% at the window's end
   (`15% → 150%`, capped at 200%). On pace or under pace, the cells keep the
-  absolute-threshold colors; when the provider gives no window bounds (no
-  `from`/`until` and no reset instant), no correlation is possible and the raw
+  absolute-threshold colors; when the provider gives no usable window bounds
+  — no reset instant, or collector `from`/`until` bounds ending at generation
+  time (a closed measurement range) — no correlation is possible and the raw
   threshold color stands.
 - **Source of truth:** the provider's documented balance API (legacy plans
   expose per-window `remaining_percent` + `resets_at`; credit plans expose
