@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: window pace silently disabled** — live collector data sends
+  `from`/`until` with `until ≈ generation time` (a closed measurement range);
+  under the original precedence that computed ~100% elapsed and silently
+  disarmed color escalation and the projection. The quota reset instant
+  (`resetsAt`, against the fixed 5h/weekly window length) now decides the
+  elapsed span, and collector bounds are only used when no reset exists and
+  the window is still open (`until > now`); closed ranges yield no pace. Live
+  report: 5h with 57% used and reset `3 h 26 min` (~31% elapsed, pace 1.82)
+  rendered plain yellow without projection; with the fix it renders orange
+  with `→ 182%`. Closes #31; mirrored to opencode-actsis-litellm (issue #17).
+
 ## 0.6.1 — 2026-10-15 — Paired release with opencode-actsis-litellm
 
 - **Window pace correlation in `/usage-subs`** — the colored gauge now takes the

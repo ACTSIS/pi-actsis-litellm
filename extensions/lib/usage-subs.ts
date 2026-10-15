@@ -42,10 +42,14 @@ function clampPercent(value: number): number {
 /**
  * Percent of the usage window that has already elapsed, or null when unknown.
  *
- * Explicit window bounds (`from`/`until`) win over quota resets because they
- * describe the exact measured window; without them, the quota reset instant
- * against the fixed window length yields the elapsed span. Callers pair this
- * with the used% of the same window to derive the consumption pace.
+ * The quota reset instant (`resetsAt`, against the fixed window length) wins:
+ * it is defined precisely for the reset window, matching the fixed 5h/weekly
+ * lengths. The collector's `from`/`until` bounds are only trusted (when no
+ * reset exists) while the window is still open (`until > now`): live collector
+ * data sends `until ≈ generatedAt` as a closed measurement range end, which
+ * would otherwise compute ~100% elapsed and silently disarm the pace rule
+ * (regression #31). Callers pair this with the used% of the same window to
+ * derive the consumption pace.
  */
 function windowElapsedPercent(
   window: WindowUsage,
@@ -53,17 +57,23 @@ function windowElapsedPercent(
   weekly: boolean,
   now: number,
 ): number | null {
+  const resetsAt = quota?.resetsAt;
+  if (resetsAt) {
+    const reset = Date.parse(resetsAt);
+    if (Number.isFinite(reset)) {
+      const length = weekly ? WEEK_WINDOW_MS : SESSION_WINDOW_MS;
+      return clampPercent(((length - Math.max(0, reset - now)) / length) * 100);
+    }
+  }
   const from = window.from ? Date.parse(window.from) : NaN;
   const until = window.until ? Date.parse(window.until) : NaN;
-  if (Number.isFinite(from) && Number.isFinite(until) && until > from) {
+  if (
+    Number.isFinite(from) && Number.isFinite(until)
+    && until > now && until > from
+  ) {
     return clampPercent(((now - from) / (until - from)) * 100);
   }
-  const resetsAt = quota?.resetsAt;
-  if (!resetsAt) return null;
-  const reset = Date.parse(resetsAt);
-  if (!Number.isFinite(reset)) return null;
-  const length = weekly ? WEEK_WINDOW_MS : SESSION_WINDOW_MS;
-  return clampPercent(((length - Math.max(0, reset - now)) / length) * 100);
+  return null;
 }
 
 /**

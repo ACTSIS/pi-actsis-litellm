@@ -454,6 +454,73 @@ describe("formatUsageSubsLines colors", () => {
     assert.ok(gaugeCell(red, "5h").includes(RED), red.join("\n"));
   });
 
+  it("defers to the quota reset when the collector bounds end at generation time (regression #31)", (t) => {
+    // Live collector semantics: until == generation time (closed measurement
+    // range). Live row was 57% used with reset 3 h 26 min away: elapsed ~31%,
+    // pace 1.82 -> orange + projection. v0.6.1 rendered yellow silently.
+    t.mock.method(Date, "now", () => Date.parse("2026-10-15T17:34:00Z"));
+    const lines = formatUsageSubsLines({
+      generatedAt: "2026-10-15T17:34:00Z",
+      subscriptions: [
+        {
+          name: "live-bug",
+          plan: "Pro",
+          session5h: {
+            usageUsd: null, limitUsd: null, requests: 2752,
+            inputTokens: null, outputTokens: null,
+            from: "2026-10-15T12:34:00Z", until: "2026-10-15T17:34:00Z",
+          },
+          weekly: {
+            usageUsd: null, limitUsd: null, requests: 15568,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          credits: {
+            includedUsd: null, includedBalanceUsd: null, purchasedUsd: 0,
+            session: { remainingPercent: 43, resetsAt: "2026-10-15T21:00:00Z" },
+            weekly: { remainingPercent: 63, resetsAt: "2026-10-19T00:30:00Z" },
+          },
+          error: null,
+        },
+      ],
+    }, { color: true });
+    const row = lines.find((l) => l.startsWith("live-bug"));
+    assert.ok(row != null, "row found");
+    const visible = row.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.ok(/57% → 182%/.test(visible), `projection expected: ${visible}`);
+    assert.ok(row.includes(ORANGE), `escalated to orange: ${row}`);
+  });
+
+  it("renders no projection when the dollar window range is closed (until <= now)", (t) => {
+    t.mock.method(Date, "now", () => Date.parse("2026-10-15T17:34:00Z"));
+    const lines = formatUsageSubsLines({
+      generatedAt: null,
+      subscriptions: [
+        {
+          name: "closed",
+          plan: null,
+          session5h: {
+            usageUsd: 6.0, limitUsd: 10.0, requests: 9,
+            inputTokens: null, outputTokens: null,
+            from: "2026-10-15T12:34:00Z", until: "2026-10-15T17:34:00Z",
+          },
+          weekly: {
+            usageUsd: 1.0, limitUsd: 50.0, requests: 9,
+            inputTokens: null, outputTokens: null, from: null, until: null,
+          },
+          credits: {
+            includedUsd: null, includedBalanceUsd: null, purchasedUsd: 0,
+            session: null, weekly: null,
+          },
+          error: null,
+        },
+      ],
+    }, { color: true });
+    const row = lines.find((l) => l.startsWith("closed"));
+    assert.ok(row != null, "row found");
+    const visible = row.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.ok(!visible.includes("→"), `no projection for closed range: ${visible}`);
+  });
+
   it("emits no ANSI by default (color off) and keeps columns aligned with color on", (t) => {
     t.mock.method(Date, "now", () => Date.parse("2026-10-14T12:00:00Z"));
     const plain = formatUsageSubsLines(quotaSubs(85, 90));
