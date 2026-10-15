@@ -1,4 +1,5 @@
 import os from "node:os";
+import { formatLocalDateTime } from "./datetime.ts";
 import path from "node:path";
 import { readFile, writeFile, rm, access, mkdir } from "node:fs/promises";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -110,7 +111,7 @@ function formatExpiry(credential: OAuthCredential | undefined): string {
     typeof credential.expires === "number" ? credential.expires : null;
   if (expires === null || !Number.isFinite(expires)) return "never";
   try {
-    return new Date(expires).toISOString();
+    return formatLocalDateTime(expires) ?? "never";
   } catch {
     return "never";
   }

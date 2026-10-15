@@ -120,6 +120,33 @@ describe("commands", () => {
   });
 
   describe("actsis-litellm:status", () => {
+    it("shows OAuth expiry in the system timezone and preserves unavailable expiry", async (t) => {
+      const originalTZ = process.env.TZ;
+      t.after(() => {
+        if (originalTZ === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTZ;
+      });
+      process.env.TZ = "America/Bogota";
+      process.env.ACTSIS_LITELLM_URL = "https://gateway.example.com";
+      t.after(() => { delete process.env.ACTSIS_LITELLM_URL; });
+      for (const [expires, expected] of [
+        [Date.parse("2026-10-14T03:30:00Z"), "2026-10-13 22:30 (America/Bogota, GMT-05:00)"],
+        [undefined, "never"],
+        [Number.NaN, "never"],
+      ] as const) {
+        const ctx = makeMockCtx({ modelRegistry: makeMockRegistry({
+          getProviderAuth: async () => ({
+            credential: { type: "oauth", expires },
+          } as unknown as AuthResult),
+        }) });
+        await buildStatusHandler(deps)("", ctx);
+        const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
+        assert.equal(notifications.length, 1);
+        assert.equal(notifications[0].level, "info");
+        assert.equal(notifications[0].message.split("\n")[1], `Auth: oauth credential stored (expires ${expected})`);
+      }
+    });
+
     it("notifies config-missing message when no config is resolved", async () => {
       const ctx = makeMockCtx();
       const handler = buildStatusHandler(deps);

@@ -1,3 +1,5 @@
+import { formatLocalDateTime } from "./datetime.ts";
+
 export interface LimitErrorInfo {
   kind: "budget_exceeded" | "throttling_error" | "rate_limit_other";
   limitType?: string;
@@ -162,14 +164,10 @@ export function formatBudgetWarning(info: LimitErrorInfo): string {
 export function formatThrottleWarning(info: LimitErrorInfo): string {
   const limitType = info.limitType ? `(${info.limitType})` : "";
   const prefix = limitType ? `Rate limit reached ${limitType}` : "Rate limit reached";
-  if (info.resetsAt) {
-    const resetsLocal = new Date(info.resetsAt);
+  const time = formatLocalDateTime(info.resetsAt);
+  if (info.resetsAt !== undefined && time) {
     const now = Date.now();
     const minutes = Math.max(0, Math.ceil((info.resetsAt - now) / 60_000));
-    const time = resetsLocal.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
     return `${prefix}. Resets at ${time} (~${minutes} min). pi will retry automatically.`;
   }
   return `${prefix}. pi will retry automatically.`;

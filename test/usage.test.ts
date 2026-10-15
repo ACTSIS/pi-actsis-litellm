@@ -344,7 +344,7 @@ describe("formatUsageLines", () => {
     assert.equal(lines.length, 2);
     assert.match(
       lines[0],
-      /Usage 2025-03-20 → 2025-03-27 \(8 days\): spend \$0\.0300/,
+      /Usage 2025-03-20 → 2025-03-27 \(8 UTC days\): spend \$0\.0300/,
     );
     assert.match(lines[1], /gpt-x\s+\$0\.0200\s+460 tok\s+5 reqs/);
   });
@@ -529,7 +529,7 @@ describe("buildTopModelsBlock", () => {
       ],
     });
     assert.ok(lines[0].startsWith("┌"));
-    assert.match(lines[0], /Top models \(7d\)/);
+    assert.match(lines[0], /Top models \(7d, UTC days\)/);
     assert.ok(lines.at(-1)!.startsWith("└"));
     assert.ok(lines.some((l) => l.includes("oc/glm-5.3-flash") && l.includes("$33.04")));
     // All rows render the same width (box aligned).
@@ -568,7 +568,7 @@ describe("buildTopModelsStatusEntries", () => {
   it("builds a title entry plus one status row per model (capped at 5)", () => {
     const entries = buildTopModelsStatusEntries({ windowLabel: "7d", rows });
     assert.equal(entries.length, 7); // title + separator + 5 rows
-    assert.match(entries[0].text, /Top models \(7d\)/);
+    assert.match(entries[0].text, /Top models \(7d, UTC days\)/);
     assert.match(entries[2].text, /oc\/glm-5\.3-flash\s+\$34\.59/);
     assert.ok(!entries.some((e) => e.text.includes("sixth-model")));
   });
