@@ -1,5 +1,6 @@
 import { AuthError, CatalogError } from "./errors.ts";
 import { usageGauge } from "./usage.ts";
+import { formatLocalDateTime } from "./datetime.ts";
 /**
  * ANSI truecolor palettes for the usage gauge thresholds. Sent only when the
  * caller opts in ({color: true}, the /usage-subs command in pi): the chat
@@ -284,8 +285,8 @@ export function formatUsageSubsLines(
   const color = options.color === true;
   const now = Date.now();
   const lines: string[] = [];
-  const generatedAt = data.generatedAt ?? "-";
-  lines.push(`Usage subscriptions (generated at ${generatedAt}, UTC):`);
+  const generatedAt = formatLocalDateTime(data.generatedAt) ?? "-";
+  lines.push(`Usage subscriptions (generated at ${generatedAt}):`);
 
   if (data.subscriptions.length === 0) {
     lines.push("(no subscriptions returned)");

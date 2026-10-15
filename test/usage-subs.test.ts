@@ -207,7 +207,7 @@ describe("formatUsageSubsLines", () => {
         },
       ],
     });
-    assert.match(lines[0], /Usage subscriptions \(generated at 2026-10-14T12:00:00Z, UTC\):/);
+    assert.match(lines[0], /Usage subscriptions \(generated at \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(.+\)\):/);
     assert.ok(/^-+$/.test(lines[2]), `separator: ${lines[2]}`);
     assert.ok(
       lines[1].includes("Sub") && lines[1].includes("5h used") && lines[1].includes("Credits"),

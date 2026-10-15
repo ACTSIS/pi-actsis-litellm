@@ -396,7 +396,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   topModelsPrefsPath = commandDeps.prefsPath;
 
   pi.registerCommand("actsis-litellm:status", {
-    description: "Show LiteLLM gateway status and model cache state",
+    description: "Show LiteLLM gateway status and cache state (dates in system timezone)",
     handler: buildStatusHandler(commandDeps),
   });
 
@@ -407,13 +407,13 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("actsis-litellm:usage", {
     description:
-      "Show per-model usage (spend/tokens/requests); args: [days] or 'YYYY-MM-DD .. YYYY-MM-DD'",
+      "Show per-model usage (spend/tokens/requests, UTC date ranges); args: [days] or 'YYYY-MM-DD .. YYYY-MM-DD'",
     handler: buildUsageHandler(commandDeps),
   });
 
   pi.registerCommand("actsis-litellm:usage-subs", {
     description:
-      "Show per-subscription Ollama Cloud usage and reset countdowns (5h: hours/minutes; weekly: days/hours)",
+      "Show per-subscription Ollama Cloud usage (system-local generation date; reset countdowns: 5h hours/minutes, weekly days/hours)",
     handler: buildUsageSubsHandler(commandDeps),
   });
 
@@ -423,7 +423,7 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("actsis-litellm:top", {
-    description: "Toggle the Top-5 models widget (no args = toggle; on | off)",
+    description: "Toggle the Top-5 models widget (7 UTC days; no args = toggle; on | off)",
     handler: async (args: string, ctx: unknown) => {
       const commandCtx = ctx as ExtensionCommandContext;
       await buildTopHandler(commandDeps)(args, commandCtx);

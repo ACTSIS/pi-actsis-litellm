@@ -141,7 +141,7 @@ Budget $1.00 used (no cap)              (without a cap)
 Shows spend, tokens, and request counts aggregated per model via the proxy's `GET /user/daily/activity` endpoint (daily spend/usage with a per-model breakdown).
 
 ```
-Usage 2025-02-26 → 2025-03-27 (30 days): $1.2345
+Usage 2025-02-26 → 2025-03-27 (30 UTC days): $1.2345
 Model                      Spend  Tokens  Reqs
 --------------------------------------------------
 oc/gpt-x                 $0.9800   61.0k   130
@@ -157,6 +157,21 @@ Total                    $1.2345   89.0k   210
 - **Caveat:** LiteLLM only calculates spend for OpenAI-compatible `/v1/chat/completions` traffic; `/v1/messages` (Anthropic format), passthrough, and unlogged requests report zero or are absent.
 - **Permission errors:** `401` maps to "run /login again"; `403` means the credential lacks the spend/usage routes permission (admin action, re-login does not fix it).
 
+## Dates and timezones
+
+Absolute timestamps (subscription generation, credential expiry, budget resets and
+rate-limit resets) use the timezone of the system running Pi. They include the
+local date, 24-hour clock, timezone identifier and UTC offset at that instant;
+daylight-saving changes are handled automatically. No timezone configuration
+is required. Missing or invalid generation timestamps show `-`; unavailable
+credential expiry remains `never`.
+
+Countdowns and cache ages are elapsed durations and do not change with timezone.
+`/usage` and Top models retain their UTC date-range calculations and explicitly
+label them as UTC days. These are the existing query boundaries, not a guarantee
+about the gateway's aggregation timezone; local-day aggregation requires a
+separate gateway contract change.
+
 ## Per-subscription usage (`/actsis-litellm:usage-subs`)
 
 Shows the org's Ollama Cloud subscription consumption exactly as the
@@ -167,7 +182,7 @@ aligned table with threshold-colored bars (green ≤ 50%, yellow 51-75%,
 orange 76-90%, red > 90% of used):
 
 ```text
-Usage subscriptions (generated at 2026-10-14T14:56:11Z, UTC):
+Usage subscriptions (generated at 2026-10-14 09:56 (America/Bogota, GMT-05:00)):
 Sub  5h used                5h resets in  Weekly used               Weekly resets in  Credits
 ----------------------------------------------------------------------------------------------
 0    ▰▱▱▱▱▱▱▱ 18% 732 reqs  0 h 4 min     ▰▱▱▱▱▱▱▱ 12% 15,830 reqs  4 d 10 h          purchased $0.00
@@ -196,7 +211,7 @@ in the Integrations group:
 ```
 Integrations
   Budget ▰▰▰▰▰▰▱▱ 78% · $466.32/$600.00
-  Top models (7d) · $43.90
+  Top models (7d, UTC days) · $43.90
   =========================================
   oc/glm-5.3-flash        $34.59  79% ▰▰▰▰▰▰▱▱
   oc/deepseek-v4.1-flash   $7.12  16% ▰▱▱▱▱▱▱▱

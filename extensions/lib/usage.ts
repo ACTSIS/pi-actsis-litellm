@@ -571,7 +571,7 @@ export function formatUsageTable(
 ): string[] {
   const lines: string[] = [];
   const totalSpend = summary.totals.spend ?? 0;
-  const header = `Usage ${summary.startDate} → ${summary.endDate} (${rangeLengthDays(summary)} days): $${totalSpend.toFixed(4)}`;
+  const header = `Usage ${summary.startDate} → ${summary.endDate} (${rangeLengthDays(summary)} UTC days): $${totalSpend.toFixed(4)}`;
   lines.push(header);
   if (summary.models.length === 0) {
     lines.push("(no logged model usage in this range)");
@@ -620,7 +620,7 @@ export function buildTopModelsBlock(options: TopModelsBlockOptions): string[] {
       spend: row.spend,
     }));
 
-  const title = ` Top models (${options.windowLabel}) `;
+  const title = ` Top models (${options.windowLabel}, UTC days) `;
   const nameWidth = Math.max(
     ...(rows.length > 0 ? rows.map((r) => r.model.length) : [0]),
   );
@@ -672,7 +672,7 @@ export function formatUsageLines(summary: ModelUsageSummary): string[] {
   const totalTokens = summary.totals.totalTokens ?? 0;
   const apiRequests = summary.totals.apiRequests ?? 0;
   lines.push(
-    `Usage ${summary.startDate} → ${summary.endDate} (${rangeLengthDays(summary)} days): spend $${spend.toFixed(4)}, ${totalTokens} tokens, ${apiRequests} requests`,
+    `Usage ${summary.startDate} → ${summary.endDate} (${rangeLengthDays(summary)} UTC days): spend $${spend.toFixed(4)}, ${totalTokens} tokens, ${apiRequests} requests`,
   );
   if (summary.models.length === 0) {
     lines.push("  (no logged model usage in this range)");
@@ -741,8 +741,8 @@ export function buildTopModelsStatusEntries(options: {
 
   const titleText =
     options.totalSpend !== null && options.totalSpend !== undefined
-      ? `Top models (${options.windowLabel}) · $${options.totalSpend.toFixed(2)}`
-      : `Top models (${options.windowLabel})`;
+      ? `Top models (${options.windowLabel}, UTC days) · $${options.totalSpend.toFixed(2)}`
+      : `Top models (${options.windowLabel}, UTC days)`;
 
   const nameWidth = Math.max(0, ...rows.map((r) => r.model.length));
   const spendWidth = Math.max("$0.00".length, ...rows.map((r) => `$${(r.spend ?? 0).toFixed(2)}`.length));
