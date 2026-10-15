@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1 — Unreleased
+
+- **Window pace correlation in `/usage-subs`** — the colored gauge now takes the
+  window's elapsed time into account: when consumption runs ahead of the window
+  (used% / elapsed% > 1, elapsed floored at 10% so a just-started window cannot
+  explode the ratio), the color escalates one threshold level and the cell
+  appends the linear projection at the window's end (`15% → 150%`), capped at
+  200%. Windows without known bounds (`from`/`until` or a reset instant) keep
+  the previous absolute-threshold color and show no projection.
+
 ## 0.6.0 — 2026-10-15 — Paired release with opencode-actsis-litellm
 
 - **Friendly reset countdowns in `/usage-subs`** — the 5h window now shows the
