@@ -43,8 +43,8 @@ export interface LiteLLMExtensionState {
   catalogCount?: number;
 }
 
-// Shared mutable state for T6 commands.
-const state: LiteLLMExtensionState = {};
+// Shared mutable state for T6 commands. Exported for tests only.
+export const state: LiteLLMExtensionState = {};
 
 let configNoticeWired = false;
 
@@ -119,7 +119,16 @@ function prefsPathDefault(): string {
   return path.join(os.homedir(), ".pi", "agent", "actsis-litellm-prefs.json");
 }
 
-async function refreshBudgetWidget(ctx: WidgetContext): Promise<string | undefined> {
+/** Test seams for refreshBudgetWidget: overrides that skip config resolution. */
+interface BudgetWidgetRefreshOptions {
+  baseUrl?: string;
+  requestTimeoutMs?: number;
+}
+
+export async function refreshBudgetWidget(
+  ctx: WidgetContext,
+  options: BudgetWidgetRefreshOptions = {},
+): Promise<string | undefined> {
   if (!ctx.hasUI) return undefined;
 
   try {
@@ -130,44 +139,51 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<string | undefin
     }
 
     const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
-    const apiKey =
-      authResult &&
-      typeof authResult === "object" &&
-      "auth" in authResult &&
-      typeof (authResult as { auth?: { apiKey?: unknown } }).auth?.apiKey === "string"
-        ? ((authResult as { auth: { apiKey: string } }).auth.apiKey as string)
-        : undefined;
+    // One shared resolution with /status and the rest of the commands
+    // (extractUsableApiKey): auth.apiKey covers API-key and OAuth shapes;
+    // the oauth credential's access token and a raw access field are the
+    // fallbacks. The previous inline extraction read only auth.apiKey and
+    // silently dropped OAuth/SSO credentials from the widget and /budget.
+    const apiKey = extractUsableApiKey(authResult);
     if (!apiKey) {
       ctx.ui.setWidget("actsis-litellm-budget", undefined);
-      return "no auth resolution (auth.apiKey missing)";
+      return "no auth resolution (no usable credential — run /login)";
     }
 
-    const baseUrl = await getBaseUrl();
-    if (!baseUrl) {
-      ctx.ui.setWidget("actsis-litellm-budget", undefined);
-      return "gateway URL not resolved";
+    let baseUrl: string | null;
+    let requestTimeoutMs: number;
+    if (options.baseUrl && options.requestTimeoutMs !== undefined) {
+      baseUrl = options.baseUrl;
+      requestTimeoutMs = options.requestTimeoutMs;
+    } else {
+      baseUrl = await getBaseUrl();
+      if (!baseUrl) {
+        ctx.ui.setWidget("actsis-litellm-budget", undefined);
+        return "gateway URL not resolved";
+      }
+
+      const storedUrl = await readStoredCredentialGatewayUrl(
+        defaultAuthPath(),
+        providerId,
+      );
+      const cfg = await resolveConfig({
+        env: process.env,
+        fileLoader: async (filePath) => {
+          try {
+            const { readFile } = await import("node:fs/promises");
+            const raw = await readFile(filePath, "utf8");
+            return JSON.parse(raw) as ConfigFileShape;
+          } catch {
+            return null;
+          }
+        },
+        storedUrl,
+        prompt: async () => undefined,
+      });
+      requestTimeoutMs = cfg.requestTimeoutMs;
     }
 
-    const storedUrl = await readStoredCredentialGatewayUrl(
-      defaultAuthPath(),
-      providerId,
-    );
-    const cfg = await resolveConfig({
-      env: process.env,
-      fileLoader: async (filePath) => {
-        try {
-          const { readFile } = await import("node:fs/promises");
-          const raw = await readFile(filePath, "utf8");
-          return JSON.parse(raw) as ConfigFileShape;
-        } catch {
-          return null;
-        }
-      },
-      storedUrl,
-      prompt: async () => undefined,
-    });
-
-    const info = await fetchBudgetInfo(baseUrl, apiKey, cfg.requestTimeoutMs);
+    const info = await fetchBudgetInfo(baseUrl, apiKey, requestTimeoutMs);
     const text = formatBudgetStatusText(info, { color: true });
     if (text) {
       ctx.ui.setStatus?.(BUDGET_STATUS_KEY, text);
