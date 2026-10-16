@@ -243,7 +243,7 @@ export function buildStatusHandler(deps: CommandDeps) {
             apiKey,
             deps.requestTimeoutMs,
           );
-          const line = formatBudgetLine(info);
+          const line = formatBudgetLine(info, { color: true });
           budgetLine = line ? `Budget: ${line}` : null;
         }
       } catch (err) {

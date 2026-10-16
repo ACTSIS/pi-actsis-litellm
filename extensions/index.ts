@@ -24,9 +24,8 @@ import {
 import { normalizeOverflowError } from "./lib/overflow.ts";
 import {
   normalizeLimitError,
-  budgetUsagePercent,
 } from "./lib/limit-errors.ts";
-import { fetchBudgetInfo, type BudgetInfo } from "./lib/budget.ts";
+import { fetchBudgetInfo, formatBudgetStatusText, type BudgetInfo } from "./lib/budget.ts";
 import {
   applyModelAliases,
   buildTopModelsStatusEntries,
@@ -119,26 +118,6 @@ let topModelsPrefsPath: string | null = null;
 function prefsPathDefault(): string {
   return path.join(os.homedir(), ".pi", "agent", "actsis-litellm-prefs.json");
 }
-const GAUGE_CELLS = 8;
-const GAUGE_FILLED = "▰";
-const GAUGE_EMPTY = "▱";
-
-function budgetGauge(percent: number): string {
-  const clamped = Math.max(0, Math.min(100, percent));
-  const filled = Math.round((clamped / 100) * GAUGE_CELLS);
-  return GAUGE_FILLED.repeat(filled) + GAUGE_EMPTY.repeat(GAUGE_CELLS - filled);
-}
-
-function budgetStatusText(info: BudgetInfo): string | undefined {
-  if (info.spend === null) return undefined;
-  const spend = `$${info.spend.toFixed(2)}`;
-  if (info.maxBudget !== null && info.maxBudget > 0) {
-    const percent = budgetUsagePercent(info.spend, info.maxBudget);
-    const cap = `$${info.maxBudget.toFixed(2)}`;
-    return `Budget ${budgetGauge(percent)} ${Math.round(percent)}% · ${spend}/${cap}`;
-  }
-  return `Budget ${spend} used (no cap)`;
-}
 
 async function refreshBudgetWidget(ctx: WidgetContext): Promise<string | undefined> {
   if (!ctx.hasUI) return undefined;
@@ -189,7 +168,7 @@ async function refreshBudgetWidget(ctx: WidgetContext): Promise<string | undefin
     });
 
     const info = await fetchBudgetInfo(baseUrl, apiKey, cfg.requestTimeoutMs);
-    const text = budgetStatusText(info);
+    const text = formatBudgetStatusText(info, { color: true });
     if (text) {
       ctx.ui.setStatus?.(BUDGET_STATUS_KEY, text);
       return text;

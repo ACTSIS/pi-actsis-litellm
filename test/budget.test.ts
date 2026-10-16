@@ -3,8 +3,14 @@ import assert from "node:assert/strict";
 import {
   fetchBudgetInfo,
   formatBudgetLine,
+  formatBudgetStatusText,
   type BudgetInfo,
 } from "../extensions/lib/budget.ts";
+import {
+  GAUGE_ANSI_RESET_DIM,
+  GAUGE_ANSI_RESET_FG,
+  gaugeColorAnsi,
+} from "../extensions/lib/gauge-color.ts";
 import { AuthError } from "../extensions/lib/errors.ts";
 
 const VALID_BODY = {
@@ -293,5 +299,95 @@ describe("budget", () => {
       });
       assert.equal(line, null);
     });
+  });
+});
+
+describe("gauge-color thresholds", () => {
+  it("selects green <=50, yellow <=75, orange <=90, red >90", () => {
+    assert.equal(gaugeColorAnsi(0), "\x1b[38;2;34;197;94m");
+    assert.equal(gaugeColorAnsi(50), "\x1b[38;2;34;197;94m");
+    assert.equal(gaugeColorAnsi(51), "\x1b[38;2;234;179;8m");
+    assert.equal(gaugeColorAnsi(75), "\x1b[38;2;234;179;8m");
+    assert.equal(gaugeColorAnsi(76), "\x1b[38;2;249;115;22m");
+    assert.equal(gaugeColorAnsi(90), "\x1b[38;2;249;115;22m");
+    assert.equal(gaugeColorAnsi(91), "\x1b[38;2;239;68;68m");
+    assert.equal(gaugeColorAnsi(100), "\x1b[38;2;239;68;68m");
+  });
+});
+
+describe("formatBudgetLine color option", () => {
+  it("colors the capped run at the used% threshold", () => {
+    const line = formatBudgetLine(
+      { spend: 95, maxBudget: 100, budgetResetAt: null, tpmLimit: null, rpmLimit: null, keyAlias: null },
+      { color: true },
+    );
+    assert.equal(line, `\x1b[38;2;239;68;68m$95.00 / $100.00 used (95%)${GAUGE_ANSI_RESET_DIM}`);
+  });
+
+  it("keeps the reset suffix outside the colored run", () => {
+    const line = formatBudgetLine(
+      { spend: 50, maxBudget: 100, budgetResetAt: Date.parse("2026-09-23T00:00:00Z"), tpmLimit: null, rpmLimit: null, keyAlias: null },
+      { color: true },
+    );
+    assert.ok(line?.startsWith(`${gaugeColorAnsi(50)}$50.00 / $100.00 used (50%)${GAUGE_ANSI_RESET_DIM} | resets `));
+  });
+
+  it("stays neutral without a cap even with color requested", () => {
+    const line = formatBudgetLine(
+      { spend: 90, maxBudget: null, budgetResetAt: null, tpmLimit: null, rpmLimit: null, keyAlias: null },
+      { color: true },
+    );
+    assert.equal(line, "$90.00 used (no budget cap)");
+  });
+});
+
+describe("formatBudgetStatusText (budget widget)", () => {
+  it("mirrors the previous plain widget text without color", () => {
+    const text = formatBudgetStatusText(
+      { spend: 2.5, maxBudget: 10, budgetResetAt: null, tpmLimit: null, rpmLimit: null, keyAlias: null },
+    );
+    assert.equal(text, `Budget \u25b0\u25b0\u25b1\u25b1\u25b1\u25b1\u25b1\u25b1 25% \u00b7 $2.50/$10.00`);
+  });
+
+  it("colors the gauge+percent run by threshold (green)", () => {
+    const text = formatBudgetStatusText(
+      { spend: 2.5, maxBudget: 10, budgetResetAt: null, tpmLimit: null, rpmLimit: null, keyAlias: null },
+      { color: true },
+    );
+    assert.equal(
+      text,
+      `Budget ${gaugeColorAnsi(25)}\u25b0\u25b0\u25b1\u25b1\u25b1\u25b1\u25b1\u25b1 25%${GAUGE_ANSI_RESET_FG} \u00b7 $2.50/$10.00`,
+    );
+  });
+
+  it("crosses thresholds as used% rises", () => {
+    const status = (spend: number, maxBudget: number) =>
+      formatBudgetStatusText(
+        { spend, maxBudget, budgetResetAt: null, tpmLimit: null, rpmLimit: null, keyAlias: null },
+        { color: true },
+      );
+    assert.ok(status(5, 10)!.includes(gaugeColorAnsi(50)));
+    assert.ok(status(5.1, 10)!.includes(gaugeColorAnsi(51)));
+    assert.ok(status(7.5, 10)!.includes(gaugeColorAnsi(75)));
+    assert.ok(status(7.6, 10)!.includes(gaugeColorAnsi(76)));
+    assert.ok(status(9, 10)!.includes(gaugeColorAnsi(90)));
+    assert.ok(status(9.1, 10)!.includes(gaugeColorAnsi(91)));
+  });
+
+  it("stays neutral with color even without a cap", () => {
+    const text = formatBudgetStatusText(
+      { spend: 3, maxBudget: null, budgetResetAt: null, tpmLimit: null, rpmLimit: null, keyAlias: null },
+      { color: true },
+    );
+    assert.equal(text, "Budget $3.00 used (no cap)");
+    assert.ok(!text.includes("\x1b["));
+  });
+
+  it("returns undefined when spend is null", () => {
+    const text = formatBudgetStatusText(
+      { spend: null, maxBudget: 10, budgetResetAt: null, tpmLimit: null, rpmLimit: null, keyAlias: null },
+      { color: true },
+    );
+    assert.equal(text, undefined);
   });
 });
