@@ -25,6 +25,17 @@ import {
 import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
 import { readStoredCredentialGatewayUrl } from "./gateway-url.ts";
 import { fetchModels } from "./client.ts";
+import {
+  filterCatalogForRole,
+  loadRoleProfilesFile,
+  makeRoleLogEntry,
+  emitRoleLogEntry,
+  roleKeyAlias,
+  validateRoleProfilesAgainstCatalog,
+  RoleProfilesError,
+  type RoleLogEntry,
+  type RoleProfile,
+} from "./role-profiles.ts";
 
 export const CACHE_PATH = path.join(
   os.homedir(),
@@ -45,6 +56,23 @@ interface ProviderBuildDeps {
   ) => Promise<void>;
   computeCacheAge: (cachePath: string) => Promise<number | null>;
   onLoginSuccess?: (gatewayUrl: string) => Promise<void>;
+  /** Test seam for acceptance check 7: structured role-model selection logs. */
+  logRoleEntry?: (entry: RoleLogEntry) => void;
+}
+
+function emitRoleEntry(
+  deps: Partial<ProviderBuildDeps> | undefined,
+  entry: RoleLogEntry,
+): void {
+  if (deps?.logRoleEntry) {
+    deps.logRoleEntry(entry);
+    return;
+  }
+  try {
+    emitRoleLogEntry(entry);
+  } catch {
+    // Logging never gates model delivery.
+  }
 }
 
 export interface BuiltProviderConfig {
@@ -215,8 +243,48 @@ export async function buildProviderConfig(
   const catalogTtlMs = cfg?.catalogTtlMs ?? 15 * 60 * 1000;
   const baseUrl = cfg?.baseUrl ?? "";
 
+  // Model-routing policy (docs/model-routing-policy.md in actsis-dots): when
+  // a role is active, load its profile first and fail closed before any
+  // model list is delivered; the delivered list is filtered to the role's
+  // allow-list. No role configured -> this whole block is a no-op.
+  const role = cfg?.role?.trim() || undefined;
+  let roleProfile: RoleProfile | null = null;
+  if (role) {
+    const profiles = await loadRoleProfilesFile(cfg?.roleProfilesPath ?? "")
+      .catch((err: unknown) => {
+        if (err instanceof RoleProfilesError) {
+          throw new RoleProfilesError(`role ${role}: ${err.message}`);
+        }
+        throw err;
+      })
+      .then((loaded) => {
+        const profile = loaded.roles[role];
+        if (!profile) {
+          throw new RoleProfilesError(
+            `unknown role "${role}" (available: ${Object.keys(loaded.roles).sort().join(", ")})`,
+          );
+        }
+        return profile;
+      });
+    roleProfile = profiles;
+  }
+
   const cached = await loadCache(CACHE_PATH);
-  const initialModels = cached ?? [];
+  let initialModels = cached ?? [];
+  if (role && roleProfile) {
+    // The fetched catalog (below, in refreshModels) is the R6 gate; the cached
+    // hint is filtered conservatively so a role never sees un-allow-listed
+    // models even before the first refresh.
+    initialModels = filterCatalogForRole(roleProfile, initialModels);
+    const resolvedModel =
+      initialModels.find((m) => m.id === roleProfile.primary)?.id ??
+      initialModels[0]?.id ??
+      roleProfile.primary;
+    emitRoleEntry(
+      deps,
+      makeRoleLogEntry({ role, keyAlias: undefined, model: resolvedModel }),
+    );
+  }
 
   const oauth = {
     name: "Actsis LiteLLM (OAuth)",
@@ -351,6 +419,7 @@ export async function buildProviderConfig(
           providerId,
           catalogTtlMs,
           requestTimeoutMs,
+          ...(role ? { role, roleProfilesPath: cfg?.roleProfilesPath } : {}),
         };
       }
       return resolveNonInteractiveConfig();
@@ -366,19 +435,100 @@ export async function buildProviderConfig(
       return storedModels;
     }
 
+    // Model-routing: with a role active, the fetched catalog is the single
+    // source of model truth and the profile gate happens HERE, at load,
+    // never at a production call. Any problem loading the profiles or the
+    // catalog fails closed (clear error naming role), instead of silently
+    // returning an unvalidated stored list.
+    let roleProfile: RoleProfile | null = null;
+    if (refreshCfg.role) {
+      const roleId = refreshCfg.role;
+      const loaded = await loadRoleProfilesFile(refreshCfg.roleProfilesPath ?? "")
+        .catch((err: unknown) => {
+          if (err instanceof RoleProfilesError) {
+            throw new RoleProfilesError(`role ${roleId}: ${err.message}`);
+          }
+          throw err;
+        })
+        .then((profiles) => {
+          const profile = profiles.roles[roleId];
+          if (!profile) {
+            throw new RoleProfilesError(
+              `unknown role "${roleId}" (available: ${Object.keys(profiles.roles).sort().join(", ")})`,
+            );
+          }
+          return profile;
+        });
+      roleProfile = loaded;
+    }
+
     let freshModels: ProviderModelConfig[];
     try {
       freshModels = await fetchCatalogModels(refreshCfg, apiKey, context.signal);
     } catch (err) {
+      if (roleProfile) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new RoleProfilesError(
+          `role ${refreshCfg.role}: catalog unavailable, cannot validate role profiles: ${reason}`,
+        );
+      }
       return storedModels;
     }
 
-    // Persist and publish best-effort: pi renders "Could not refresh <provider>;
-    // showing cached models" whenever refreshModels throws, so neither the disk
-    // cache write nor the models-store publish may reject on transient IO/lock
-    // contention (models-store.json is lock-protected and shared across pi
-    // sessions). The fetched models are still returned for this refresh; the
-    // next refresh retries persistence.
+    if (roleProfile) {
+      const roleId = refreshCfg.role as string;
+      const roleErrors = validateRoleProfilesAgainstCatalog(
+        { key_ttl_days: 1, roles: { [roleId]: roleProfile } as never },
+        freshModels.map((m) => m.id),
+      );
+      if (roleErrors.length > 0) {
+        throw new RoleProfilesError(
+          `role ${roleId}: ${roleErrors.map((msg) => msg.replace(`role ${roleId}: `, "")).join("; ")}`,
+        );
+      }
+      const delivered = filterCatalogForRole(roleProfile, freshModels);
+      const credUserId =
+        context.credential &&
+        typeof context.credential === "object" &&
+        typeof (context.credential as unknown as { userId?: unknown }).userId === "string"
+          ? ((context.credential as unknown as { userId: string }).userId as string)
+          : undefined;
+      const resolvedModel =
+        delivered.find((m) => m.id === roleProfile.primary)?.id ??
+        delivered[0]?.id ??
+        roleProfile.primary;
+      emitRoleEntry(
+        deps,
+        makeRoleLogEntry({
+          role: roleId,
+          keyAlias: credUserId ? roleKeyAlias(credUserId, roleId) : undefined,
+          model: resolvedModel,
+        }),
+      );
+      // Publish the filtered list so the role never sees un-allow-listed
+      // models, but keep the shared disk cache at the full fetched catalog
+      // (other sessions/roles resolve their own subset from the same cache).
+      try {
+        await saveCache(CACHE_PATH, freshModels);
+      } catch {
+        // Cache write failure is non-fatal: catalog remains usable in memory.
+      }
+
+      // Publish the updated catalog to Pi's persistent models store.
+      try {
+        await context.publish({
+          persist: {
+            models: delivered as unknown as import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api>[],
+            checkedAt: Date.now(),
+          },
+        });
+      } catch {
+        // Store publish failure is non-fatal for the same reason; pi keeps the
+        // previous stored entry and the next refresh retries.
+      }
+
+      return delivered;
+    }
     try {
       await saveCache(CACHE_PATH, freshModels);
     } catch {
