@@ -1,15 +1,10 @@
 import { ConfigError } from "./errors.ts";
-import { loadRoleProfiles } from "./role-profiles.ts";
 
 export interface ActsisEnabledConfig {
   baseUrl: string;
   providerId: string;
   catalogTtlMs: number;
   requestTimeoutMs: number;
-  /** Model-routing role (docs/model-routing-policy.md in actsis-dots). */
-  role?: string;
-  /** Path to the role-profiles file (same contract as llm-server's role-profiles.json). */
-  roleProfilesPath?: string;
 }
 
 export interface ConfigFileShape {
@@ -17,8 +12,6 @@ export interface ConfigFileShape {
   providerId?: string;
   catalogTtlMinutes?: number;
   requestTimeoutMs?: number;
-  role?: string;
-  roleProfilesPath?: string;
 }
 
 const DEFAULT_PROVIDER_ID = "actsis-litellm";
@@ -108,46 +101,10 @@ export async function resolveConfig(
 
   const baseUrl = normalizeBaseUrl(rawUrl);
 
-  // Model-routing role resolution (env overrides the config-file field). When
-  // a role is configured, resolution validates it against the profiles file
-  // and fails closed on anything unusable; with no role, nothing extra runs.
-  const envRole = deps.env.ACTSIS_LITELLM_ROLE?.trim() || undefined;
-  const fileRole = fileValue?.role?.trim() || undefined;
-  const role = envRole ?? fileRole;
-  const roleProfilesPath = fileValue?.roleProfilesPath?.trim() || undefined;
-  if (role) {
-    if (!roleProfilesPath) {
-      throw new ConfigError(
-        `Role "${role}" is configured but roleProfilesPath is missing: set roleProfilesPath in the config file to the role-profiles.json produced by llm-server provisioning.`,
-      );
-    }
-    const rawProfiles = await deps.fileLoader(roleProfilesPath);
-    if (rawProfiles === null) {
-      throw new ConfigError(
-        `Role "${role}": role profiles unreadable at ${roleProfilesPath} (set roleProfilesPath to a readable role-profiles.json produced by llm-server provisioning).`,
-      );
-    }
-    let profiles;
-    try {
-      profiles = loadRoleProfiles(rawProfiles as unknown);
-    } catch (err) {
-      throw new ConfigError(
-        `Role "${role}": ${err instanceof Error ? err.message.slice("roleProfiles: ".length) : String(err)}`,
-      );
-    }
-    if (!profiles.roles[role]) {
-      throw new ConfigError(
-        `unknown role "${role}" (available: ${Object.keys(profiles.roles).sort().join(", ")})`,
-      );
-    }
-  }
-
   return {
     baseUrl,
     providerId: normalizeProviderId(fileValue?.providerId),
     catalogTtlMs: normalizeCatalogTtlMs(fileValue?.catalogTtlMinutes),
     requestTimeoutMs: normalizeRequestTimeoutMs(fileValue?.requestTimeoutMs),
-    ...(role ? { role } : {}),
-    ...(role ? { roleProfilesPath } : {}),
   };
 }
