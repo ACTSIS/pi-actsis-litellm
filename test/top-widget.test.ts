@@ -14,20 +14,26 @@ import {
 
 /**
  * Contract test: pins Gentle Shell's real sanitizeStatus behavior (from
- * gentle-pi/lib/shell-bar.ts). If gentle-pi changes it, this test fails and
- * the widget formatting must be revisited.
+ * gentle-pi/lib/shell-bar.ts, as of Gentleman-Programming/gentle-shell#2330):
+ * SGR runs ([..m) survive because extensions paint their own palette
+ * (threshold-colored gauges), while every other escape/non-SGR escape and
+ * control byte is still stripped, and NBSP is kept. If gentle-pi changes it,
+ * this test fails and the widget formatting must be revisited.
  */
 function shellSanitizeStatus(text: string): string {
-  return sanitizeTerminalTextLike(text.replace(/[\r\n\t]/g, " "))
+  const sgrs: string[] = [];
+  const guarded = text.replace(/\x1b\[[0-9;]*m/g, (run) => {
+    sgrs.push(run);
+    return `\uFFFD${sgrs.length - 1}\uFFFD`;
+  });
+  return guarded
+    .replace(/[\r\n\t]/g, " ")
+    .replace(/\x1B\[[\d;]*[A-Za-z]/g, "")
+    .replace(/\x1B\][^\x07]*\x07/g, "")
+    .replace(/[\u0000-\u0008\u000b-\u001a\u001c-\u001f\u007f-\u009f]/g, "")
+    .replace(/\uFFFD(\d+)\uFFFD/g, (_, index) => sgrs[Number(index)] ?? "")
     .replace(/ +/g, " ")
     .trim();
-}
-
-function sanitizeTerminalTextLike(value: string): string {
-  // Replicates control-char stripping (strips ANSI/control chars, keeps NBSP).
-  return value
-    .replace(/\x1B\[[\d;]*[A-Za-z]/g, "")
-    .replace(/[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f]/g, "");
 }
 
 describe("top-models status rows survive shell sanitization (NBSP columns)", () => {
@@ -165,5 +171,13 @@ describe("actsis-litellm:top command", () => {
     await handler("maybe", ctx);
     assert.equal(await readTopModelsWidgetEnabled(deps.prefsPath), true);
     assert.equal(ctx.notifications[0].level, "warning");
+  });
+});
+describe("gentle shell keeps SGR from colored statuses (gentle-shell#2330)", () => {
+  it("preserves threshold-colored runs and strips non-SGR escapes", () => {
+    const status = "Budget \x1b[38;2;34;197;94m▰▱▱▱▱▱▱▱ 12%\x1b[39m · $1.23/$10.00\x1b]8;;https://gw\x07";
+    const sanitized = shellSanitizeStatus(status);
+    assert.match(sanitized, /\x1b\[38;2;34;197;94m▰▱▱▱▱▱▱▱ 12%\x1b\[39m/);
+    assert.doesNotMatch(sanitized, /https:\/\/gw/);
   });
 });
