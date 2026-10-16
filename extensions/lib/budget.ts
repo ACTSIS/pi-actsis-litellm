@@ -1,6 +1,12 @@
 import { AuthError, CatalogError } from "./errors.ts";
 import { formatLocalDateTime } from "./datetime.ts";
 import { fetchFailureMessage } from "./network-error.ts";
+import {
+  GAUGE_ANSI_RESET_DIM,
+  GAUGE_ANSI_RESET_FG,
+  gaugeColorAnsi,
+} from "./gauge-color.ts";
+import { usageGauge } from "./usage.ts";
 
 export interface BudgetInfo {
   spend: number | null;
@@ -153,6 +159,33 @@ interface UserInfoResponse {
 }
 
 /**
+ * Footer status text for the budget widget, in /usage's gauge-or-absolute
+ * discipline. With {color: true} the gauge+percent run carries the shared
+ * ANSI threshold palette. There is no pace escalation (unlike the
+ * /usage-subs windows): budgetResetAt marks the next reset but the budget
+ * window span is unknown, so plain thresholds apply. The footer renders
+ * extension statuses without a dim wrapper, so the colored run resets to
+ * default fg. Plain output stays byte-identical when color is omitted.
+ */
+export function formatBudgetStatusText(
+  info: BudgetInfo,
+  options: { color?: boolean } = {},
+): string | undefined {
+  if (info.spend === null) return undefined;
+  const spend = `$${info.spend.toFixed(2)}`;
+  if (info.maxBudget !== null && info.maxBudget > 0) {
+    const percent = budgetUsagePercent(info.spend, info.maxBudget);
+    const cap = `$${info.maxBudget.toFixed(2)}`;
+    const run = `${usageGauge(percent)} ${Math.round(percent)}%`;
+    const colored = options.color === true
+      ? `${gaugeColorAnsi(percent)}${run}${GAUGE_ANSI_RESET_FG}`
+      : run;
+    return `Budget ${colored} \u00b7 ${spend}/${cap}`;
+  }
+  return `Budget ${spend} used (no cap)`;
+}
+
+/**
  * Fallback for SSO credentials: /user/info accepts the SSO token and reports
  * user-level spend and budget (no per-key limits apply).
  */
@@ -220,14 +253,24 @@ export function budgetUsagePercent(
   return ((spend ?? 0) / maxBudget) * 100;
 }
 
-export function formatBudgetLine(info: BudgetInfo): string | null {
+export function formatBudgetLine(
+  info: BudgetInfo,
+  options: { color?: boolean } = {},
+): string | null {
   if (info.spend === null) return null;
   const percent = budgetUsagePercent(info.spend, info.maxBudget);
-  const capPart =
-    info.maxBudget !== null
-      ? ` / $${info.maxBudget.toFixed(2)} used (${Math.round(percent)}%)`
-      : ` used (no budget cap)`;
+  const maxBudget = info.maxBudget;
+  const hasCap = maxBudget !== null;
+  const capPart = hasCap
+    ? ` / $${maxBudget.toFixed(2)} used (${Math.round(percent)}%)`
+    : ` used (no budget cap)`;
   let line = `$${info.spend.toFixed(2)}${capPart}`;
+  // In /usage's gauge-or-absolute discipline the capped run carries the
+  // threshold color; without a cap there is no percent to signal, so the
+  // line stays neutral. The reset suffix stays outside the colored run.
+  if (hasCap && options.color === true) {
+    line = `${gaugeColorAnsi(percent)}${line}${GAUGE_ANSI_RESET_DIM}`;
+  }
   if (info.budgetResetAt !== null) {
     const time = formatLocalDateTime(info.budgetResetAt);
     if (time) line += ` | resets ${time}`;
