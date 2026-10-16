@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.3 — 2026-10-16 — Paired release with opencode-actsis-litellm
+
+- **Budget gauge colors** — the widget (footer status) and the `/status`
+  `Budget:` line now carry the same ANSI truecolor threshold palette as
+  `/usage-subs` (green ≤50%, yellow 51–75%, orange 76–90%, red >90%) through a
+  shared `lib/gauge-color.ts`; the no-cap forms stay neutral and there is no
+  pace escalation (the budget window span is unknown). Colored output renders
+  in the pi footer and chat; Gentle Shell needed an upstream change to keep
+  extension-painted statuses (Gentleman-Programming/gentle-shell#2330, open).
+  Closes #35; mirrored to opencode-actsis-litellm (issue #21, PR #22).
+- **Fixed: OAuth credentials rendered the budget widget empty** —
+  `refreshBudgetWidget` extracted the bearer token from `auth.apiKey` only, so
+  OAuth/SSO credentials silently resolved nothing (widget cleared, `/budget`
+  printed a plain "no auth resolution" line) while `/status` resolved through
+  `extractUsableApiKey`'s OAuth fallback. The widget now shares that resolver,
+  pinned by OAuth regression tests (PR #38).
+- Test-only: the Gentle Shell sanitize contract test now pins the
+  SGR-preserving behavior (PR #39).
+
 ## 0.6.2 — 2026-10-15 — Paired release with opencode-actsis-litellm
 
 - **Fixed: window pace silently disabled** — live collector data sends
