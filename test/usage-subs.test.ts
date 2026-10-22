@@ -53,6 +53,9 @@ function sampleBody(): unknown {
     subscriptions: [
       {
         name: "alpha",
+        provider: null,
+        account: null,
+        status: null,
         plan: "Pro",
         session5h: {
           usageUsd: 5.0,
@@ -84,15 +87,15 @@ function sampleBody(): unknown {
 }
 
 describe("fetchUsageSubs", () => {
-  it("GETs /ollama-usage once with Bearer auth", async () => {
+  it("GETs /subs-usage once with Bearer auth", async () => {
     const recorder = mockFetch((requestUrl) => {
-      assert.equal(requestUrl.pathname, "/ollama-usage");
+      assert.equal(requestUrl.pathname, "/subs-usage");
       return jsonResponse(sampleBody());
     });
     try {
       const result = await fetchUsageSubs("http://gw.example:4000", "sk-test", 5_000);
       assert.equal(recorder.captured.length, 1);
-      assert.ok(recorder.captured[0].startsWith("http://gw.example:4000/ollama-usage"));
+      assert.ok(recorder.captured[0].startsWith("http://gw.example:4000/subs-usage"));
       assert.equal(recorder.requests[0].headers.get("authorization"), "Bearer sk-test");
       assert.equal(result.generatedAt, "2026-10-14T12:00:00Z");
       assert.equal(result.subscriptions.length, 1);
@@ -105,6 +108,66 @@ describe("fetchUsageSubs", () => {
       assert.equal(result.subscriptions[0].credits.session?.resetsAt, "2026-10-14T15:00:00Z");
       assert.equal(result.subscriptions[0].credits.weekly, null);
       assert.equal(result.subscriptions[0].error, null);
+    } finally {
+      recorder.restore();
+    }
+  });
+
+  it("falls back to the legacy /ollama-usage alias on 404", async () => {
+    const recorder = mockFetch((requestUrl) => {
+      if (requestUrl.pathname === "/subs-usage") {
+        return new Response("not found", { status: 404 });
+      }
+      assert.equal(requestUrl.pathname, "/ollama-usage");
+      return jsonResponse(sampleBody());
+    });
+    try {
+      const result = await fetchUsageSubs("http://gw.example:4000", "sk-test", 5_000);
+      assert.deepEqual(recorder.captured, [
+        "http://gw.example:4000/subs-usage",
+        "http://gw.example:4000/ollama-usage",
+      ]);
+      assert.equal(result.subscriptions[0].name, "alpha");
+    } finally {
+      recorder.restore();
+    }
+  });
+
+  it("parses schema v2 identity fields (provider/account/status)", async () => {
+    const recorder = mockFetch(() =>
+      jsonResponse({
+        schemaVersion: 2,
+        generatedAt: "2026-10-22T19:25:15Z",
+        subscriptions: [{
+          id: "claude:default", provider: "claude", account: "default",
+          label: null, plan: "subscription", status: "critical",
+          windows: [{ name: "session_5h", usedPercent: 100,
+                      remainingPercent: 0, resetsAt: "2026-10-22T19:49:59Z" }],
+          credits: { balanceUsd: null, limitUsd: null, usedUsd: 0,
+                     unlimited: null, disabledReason: "out_of_credits",
+                     includedUsd: null, includedBalanceUsd: null,
+                     purchasedUsd: null,
+                     session: { remainingPercent: 0,
+                                resetsAt: "2026-10-22T19:49:59Z" },
+                     weekly: null },
+          details: null, error: null,
+          // legacy S6 view derived by the collector
+          name: "default", session5h: { usageUsd: null, limitUsd: null,
+            requests: null, inputTokens: null, outputTokens: null,
+            from: null, until: null },
+          weekly: { usageUsd: null, limitUsd: null, requests: null,
+                    inputTokens: null, outputTokens: null, from: null, until: null },
+        }],
+      }),
+    );
+    try {
+      const result = await fetchUsageSubs("http://gw.example:4000", "sk-test", 5_000);
+      const sub = result.subscriptions[0];
+      assert.equal(sub.provider, "claude");
+      assert.equal(sub.account, "default");
+      assert.equal(sub.status, "critical");
+      assert.equal(sub.name, "default");
+      assert.equal(sub.credits.session?.remainingPercent, 0);
     } finally {
       recorder.restore();
     }
@@ -177,6 +240,9 @@ describe("formatUsageSubsLines", () => {
       subscriptions: [
         {
           name: "alpha",
+          provider: null,
+          account: null,
+          status: null,
           plan: "Pro",
           session5h: {
             usageUsd: 5.0,
@@ -231,6 +297,9 @@ describe("formatUsageSubsLines", () => {
       subscriptions: [
         {
           name: "beta",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: 3.5,
@@ -273,6 +342,9 @@ describe("formatUsageSubsLines", () => {
       subscriptions: [
         {
           name: "gamma",
+          provider: null,
+          account: null,
+          status: null,
           plan: "Basic",
           session5h: {
             usageUsd: null,
@@ -318,6 +390,9 @@ describe("formatUsageSubsLines", () => {
       subscriptions: [
         {
           name: "legacy",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: null,
@@ -375,7 +450,8 @@ describe("formatUsageSubsLines", () => {
       const lines = formatUsageSubsLines({
         generatedAt: null,
         subscriptions: [{
-          name: "countdown", plan: null, session5h: window, weekly: window,
+          name: "countdown", provider: null, account: null, status: null,
+          plan: null, session5h: window, weekly: window,
           credits: {
             includedUsd: null, includedBalanceUsd: null, purchasedUsd: 2,
             session: { remainingPercent: 80, resetsAt: sessionReset },
@@ -413,6 +489,9 @@ describe("formatUsageSubsLines colors", () => {
       subscriptions: [
         {
           name: "legacy",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: null, limitUsd: null, requests: 100,
@@ -464,6 +543,9 @@ describe("formatUsageSubsLines colors", () => {
       subscriptions: [
         {
           name: "live-bug",
+          provider: null,
+          account: null,
+          status: null,
           plan: "Pro",
           session5h: {
             usageUsd: null, limitUsd: null, requests: 2752,
@@ -497,6 +579,9 @@ describe("formatUsageSubsLines colors", () => {
       subscriptions: [
         {
           name: "closed",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: 6.0, limitUsd: 10.0, requests: 9,
@@ -551,6 +636,9 @@ describe("formatUsageSubsLines window pace", () => {
       subscriptions: [
         {
           name: "paced",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: null, limitUsd: null, requests: 40,
@@ -600,6 +688,9 @@ describe("formatUsageSubsLines window pace", () => {
       subscriptions: [
         {
           name: "dollar",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: 5.0, limitUsd: 10.0, requests: 8,
@@ -632,6 +723,9 @@ describe("formatUsageSubsLines window pace", () => {
       subscriptions: [
         {
           name: "opaque",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: 5.0, limitUsd: 10.0, requests: 8,
@@ -743,6 +837,23 @@ function makeMockCtx(
   return ctx;
 }
 
+  it("prefixes the row with the provider on schema v2 payloads", async () => {
+    const body = sampleBody() as Record<string, unknown>;
+    const [sub] = body.subscriptions as Record<string, unknown>[];
+    (body.subscriptions as Record<string, unknown>[])[0] = {
+      ...sub, provider: "chatgpt", account: "alpha", status: "ok",
+    };
+    const lines = formatUsageSubsLines(body as never);
+    assert.ok(lines.join("\n").includes("chatgpt:alpha (Pro)"), lines.join("\n"));
+  });
+
+  it("keeps legacy rows unprefixed when the payload has no provider", () => {
+    const lines = formatUsageSubsLines(sampleBody() as never);
+    const text = lines.join("\n");
+    assert.ok(text.includes("alpha (Pro)"), text);
+    assert.ok(!text.includes("chatgpt:"), text);
+  });
+
 describe("buildUsageSubsHandler", () => {
   let tmpDir: string;
   let originalEnv: NodeJS.ProcessEnv;
@@ -773,7 +884,7 @@ describe("buildUsageSubsHandler", () => {
   it("notifies the rendered usage-subs lines from the gateway", async () => {
     process.env.ACTSIS_LITELLM_URL = "http://gw.example:4000";
     const recorder = mockFetch((requestUrl) => {
-      assert.equal(requestUrl.pathname, "/ollama-usage");
+      assert.equal(requestUrl.pathname, "/subs-usage");
       return jsonResponse(sampleBody());
     });
     try {
