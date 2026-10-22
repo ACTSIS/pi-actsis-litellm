@@ -450,7 +450,8 @@ describe("formatUsageSubsLines", () => {
       const lines = formatUsageSubsLines({
         generatedAt: null,
         subscriptions: [{
-          name: "countdown", plan: null, session5h: window, weekly: window,
+          name: "countdown", provider: null, account: null, status: null,
+          plan: null, session5h: window, weekly: window,
           credits: {
             includedUsd: null, includedBalanceUsd: null, purchasedUsd: 2,
             session: { remainingPercent: 80, resetsAt: sessionReset },
@@ -542,6 +543,9 @@ describe("formatUsageSubsLines colors", () => {
       subscriptions: [
         {
           name: "live-bug",
+          provider: null,
+          account: null,
+          status: null,
           plan: "Pro",
           session5h: {
             usageUsd: null, limitUsd: null, requests: 2752,
@@ -575,6 +579,9 @@ describe("formatUsageSubsLines colors", () => {
       subscriptions: [
         {
           name: "closed",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: 6.0, limitUsd: 10.0, requests: 9,
@@ -629,6 +636,9 @@ describe("formatUsageSubsLines window pace", () => {
       subscriptions: [
         {
           name: "paced",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: null, limitUsd: null, requests: 40,
@@ -678,6 +688,9 @@ describe("formatUsageSubsLines window pace", () => {
       subscriptions: [
         {
           name: "dollar",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: 5.0, limitUsd: 10.0, requests: 8,
@@ -710,6 +723,9 @@ describe("formatUsageSubsLines window pace", () => {
       subscriptions: [
         {
           name: "opaque",
+          provider: null,
+          account: null,
+          status: null,
           plan: null,
           session5h: {
             usageUsd: 5.0, limitUsd: 10.0, requests: 8,
