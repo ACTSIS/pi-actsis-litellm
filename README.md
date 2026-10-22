@@ -177,7 +177,8 @@ separate gateway contract change.
 Shows the org's Ollama Cloud subscription consumption exactly as the
 provider's admin dashboard: **remaining %** of the 5-hour window and the
 weekly window per subscription, with reset countdowns and credits, aggregated by
-the gateway's usage-subs collector (one `GET /ollama-usage`). Rendered as an
+the gateway's usage-subs collector (one `GET /subs-usage`, falling back to the
+legacy `/ollama-usage` alias). Rendered as an
 aligned table with threshold-colored bars (green ≤ 50%, yellow 51-75%,
 orange 76-90%, red > 90% of used), correlated with how much of the window has
 already elapsed:
