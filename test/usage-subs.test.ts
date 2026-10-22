@@ -280,7 +280,7 @@ describe("formatUsageSubsLines", () => {
       `header: ${lines[1]}`,
     );
     assert.ok(
-      lines.some((l) => l.includes("alpha (Pro)") && /\$5\.00 \/ \$10\.00/.test(l)),
+      lines.some((l) => l.startsWith("alpha") && /\$5\.00 \/ \$10\.00/.test(l)),
       lines.join("\n"),
     );
     assert.ok(lines.some((l) => /\$20\.00 \/ \$50\.00/.test(l)));
@@ -331,8 +331,9 @@ describe("formatUsageSubsLines", () => {
       ],
     });
     assert.ok(lines.some((l) => /\bbeta\b/.test(l)), lines.join("\n"));
-    assert.ok(lines.some((l) => /5 reqs · 300 tok/.test(l)), lines.join("\n"));
-    assert.ok(lines.some((l) => /50 reqs · 3,000 tok/.test(l)));
+    // Request/token counters were dropped: a window with no quota and no
+    // money renders a dash, keeping the table narrow.
+    assert.ok(lines.some((l) => l.includes(" - ")), lines.join("\n"));
     assert.ok(!lines.some((l) => l.includes("included $")));
   });
 
@@ -375,7 +376,7 @@ describe("formatUsageSubsLines", () => {
         },
       ],
     });
-    assert.ok(lines.some((l) => l.includes("gamma (Basic)")), lines.join("\n"));
+    assert.ok(lines.some((l) => l.startsWith("gamma")), lines.join("\n"));
     assert.ok(
       lines.some((l) => l.includes("(error: upstream rate limit exceeded)")),
       lines.join("\n"),
@@ -427,7 +428,7 @@ describe("formatUsageSubsLines", () => {
     // 85.47 -> ~15%, 88.15 -> ~12%); padded columns collapse to \s+ in patterns.
     assert.ok(
       lines.some((l) =>
-        /legacy\s+.*15% 642 reqs\s+3 h 0 min\s+.*12% 15,740 reqs\s+4 d 12 h\s+purchased \$0\.00/.test(l),
+        /legacy\s+.*15%\s+3 h 0 min\s+.*12%\s+4 d 12 h\s+purchased \$0\.00/.test(l),
       ),
       lines.join("\n"),
     );
@@ -464,8 +465,8 @@ describe("formatUsageSubsLines", () => {
         "Sub", "5h used", "5h resets in", "Weekly used", "Weekly resets in", "Credits",
       ]);
       assert.deepEqual(lines[3].split(/\s{2,}/), [
-        "countdown", "▰▰▱▱▱▱▱▱ 20% 7 reqs", sessionText,
-        "▰▰▱▱▱▱▱▱ 30% 7 reqs", weeklyText, "purchased $2.00",
+        "countdown", "▰▰▱▱▱▱▱▱ 20%", sessionText,
+        "▰▰▱▱▱▱▱▱ 30%", weeklyText, "purchased $2.00",
       ]);
     }
   });
@@ -844,13 +845,13 @@ function makeMockCtx(
       ...sub, provider: "chatgpt", account: "alpha", status: "ok",
     };
     const lines = formatUsageSubsLines(body as never);
-    assert.ok(lines.join("\n").includes("chatgpt:alpha (Pro)"), lines.join("\n"));
+    assert.ok(lines.join("\n").includes("chatgpt:alpha"), lines.join("\n"));
   });
 
   it("keeps legacy rows unprefixed when the payload has no provider", () => {
     const lines = formatUsageSubsLines(sampleBody() as never);
     const text = lines.join("\n");
-    assert.ok(text.includes("alpha (Pro)"), text);
+    assert.ok(text.includes("alpha"), text);
     assert.ok(!text.includes("chatgpt:"), text);
   });
 
@@ -900,11 +901,11 @@ describe("buildUsageSubsHandler", () => {
       const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
       assert.equal(notifications.length, 1);
       assert.equal(notifications[0].level, "info");
-      assert.ok(notifications[0].message.includes("alpha (Pro)"));
+      assert.ok(notifications[0].message.includes("alpha"));
       assert.ok(notifications[0].message.includes("5h used"));
       // sampleBody carries the legacy session quota: the 5h cell renders
       // remaining-based gauge (100-85.47 -> 15%, requests: 12), not limitUsd.
-      assert.ok(notifications[0].message.includes("15% 12 reqs"));
+      assert.ok(notifications[0].message.includes("15%"));
       assert.ok(notifications[0].message.includes("$20.00 / $50.00"));
       assert.ok(notifications[0].message.includes("included $100.00"));
     } finally {
