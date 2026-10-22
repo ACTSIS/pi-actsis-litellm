@@ -56,9 +56,15 @@ export interface WindowQuota {
   resetsAt: string | null;
 }
 
-/** Per-subscription usage returned by the single `/ollama-usage` call. */
+/** Per-subscription usage returned by the single `/subs-usage` call. */
 export interface SubscriptionUsage {
   name: string;
+  /** Schema v2: "ollama" | "chatgpt" | "claude" | ... (absent on legacy payloads). */
+  provider: string | null;
+  /** Schema v2 account suffix inside the provider (legacy payloads: null). */
+  account: string | null;
+  /** Schema v2 status: ok | critical | error (legacy payloads: null). */
+  status: string | null;
   plan: string | null;
   session5h: WindowUsage;
   weekly: WindowUsage;
@@ -126,8 +132,12 @@ function asCredits(value: unknown): SubscriptionCredits {
 
 function asSubscription(value: unknown): SubscriptionUsage {
   const record = asRecord(value);
+  const provider = asString(record.provider);
   return {
-    name: asString(record.name) ?? "unknown",
+    name: asString(record.name) ?? asString(record.account) ?? "unknown",
+    provider,
+    account: asString(record.account),
+    status: asString(record.status),
     plan: asString(record.plan),
     session5h: asWindowUsage(record.session5h),
     weekly: asWindowUsage(record.weekly),
@@ -145,8 +155,11 @@ function parseUsageSubscriptions(body: unknown): UsageSubscriptions {
 }
 
 /**
- * Fetches per-subscription Ollama Cloud usage from the gateway's single
- * `GET /ollama-usage` pass-through endpoint.
+ * Fetches subscription usage from the gateway's pass-through endpoint.
+ *
+ * Canonical route is `GET /subs-usage` (schema v2: one flat list for every
+ * provider). Gateways deployed before the rename only expose
+ * `/ollama-usage`, so a 404 falls back to it (both serve the same report).
  *
  * The collector returns both the rolling 5h window (`session5h`) and the weekly
  * window in one response, so the plugin issues exactly one upstream GET. The
@@ -163,14 +176,17 @@ export async function fetchUsageSubs(
   timeoutMs: number,
 ): Promise<UsageSubscriptions> {
   const normalized = gatewayUrl.replace(/\/+$/, "");
-  const url = `${normalized}/ollama-usage`;
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  const request = (path: string): Promise<Response> =>
+    fetch(`${normalized}${path}`, { headers, signal: AbortSignal.timeout(timeoutMs) });
 
   let response: Response;
   try {
-    response = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    response = await request("/subs-usage");
+    if (response.status === 404) {
+      // Gateway predates the rename: the legacy alias serves the same report.
+      response = await request("/ollama-usage");
+    }
   } catch (err) {
     throw new CatalogError(
       `Failed to fetch usage-subs: ${err instanceof Error ? err.message : String(err)}`,
@@ -283,8 +299,12 @@ export function formatUsageSubsLines(
   }
 
   const header = ["Sub", "5h used", "5h resets (UTC)", "Weekly used", "Weekly resets (UTC)", "Credits"];
+  const label = (sub: SubscriptionUsage): string => {
+    const id = sub.provider ? `${sub.provider}:${sub.name}` : sub.name;
+    return sub.plan ? `${id} (${sub.plan})` : id;
+  };
   const rows = data.subscriptions.map((sub) => [
-    sub.plan ? `${sub.name} (${sub.plan})` : sub.name,
+    label(sub),
     sub.error ? `(error: ${sub.error})` : formatWindowCell(sub.session5h, sub.credits.session, color),
     sub.error ? "-" : formatResetsCell(sub.credits.session),
     sub.error ? "-" : formatWindowCell(sub.weekly, sub.credits.weekly, color),
