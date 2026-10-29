@@ -55,3 +55,11 @@ L1 (2026-10-29): Owner approved implementation ("Iniciemos") after the
    Tests: test/image-tool.test.ts (26 new; suite 373/373, typecheck clean).
    NOTE: test order slipped — implementation first, tests written against
    it (recorded per test-first rule); the suite is the regression guard.
+L3 (2026-10-29): Delivered — issue #50, PR #51, squash merge 61ed4aa to
+   main. Live smoke: fresh headless pi session, a NATURAL chat request
+   ("Generá una imagen pixel-art de un zorro rojo, tamaño 512") made the
+   agent discover and call the tool -> gateway generation succeeded
+   (SpendLogs sdxl-pixel-art 0.00245 at 16:00); the agent offered a
+   follow-up edit referencing the image, confirming the S1 flow.
+   Note: unrelated pre-existing warning in the extension loader about
+   gentle-engram's peerDependencies (typebox) — out of scope here.
