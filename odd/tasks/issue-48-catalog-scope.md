@@ -43,4 +43,6 @@ Root cause already diagnosed live on the gateway (see Log).
   consent-chosen team's list). User action: /login again, choose the team
   with the wanted access; extension now documents the scope (T1/T2).
 - L3 (evidence recorded): T1/T2 in commit feat/48-catalog-scope (catalog
-  scope metadata v2-additive, tests test/catalog-scope.test.ts 8 pass).
+  scope metadata v2-additive, tests test/catalog-scope.test.ts 8 pass).- L4 (delivery, 2026-10-29): issue approved by maintainer during delivery;
+  PR #49 (Closes #48) merged to main at 6f3a9cc; CI green (typecheck+352
+  tests). Feature complete and merged.

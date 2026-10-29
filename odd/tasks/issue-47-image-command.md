@@ -54,4 +54,9 @@ Implement `/image` in the extension: pixel-art generation via the gateway's
 
 ## Log
 
-- L1 (user, 2026-10-29 session): "Trabajemos con las issues" (#48 + #47).
+- L1 (user, 2026-10-29 session): "Trabajemos con las issues" (#48 + #47).- L5 (delivery 2026-10-29): PR #49 (Closes #47) merged to main at 6f3a9cc;
+  CI green. Delivery found a test-env defect (env restore left later tests
+  without a gateway URL on CI, which has no ~/.pi files): fixed by setting
+  ACTSIS_LITELLM_URL per test (commit 742a1ef). In-TUI verification of
+  /image after an interactive pi session remains as the last acceptance
+  item (needs a real session, done by the user).
