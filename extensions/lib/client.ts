@@ -229,7 +229,7 @@ function discoveryUrl(baseUrl: string): string {
  * anonymous TypeError. Diagnostics only: the URL and init object are passed
  * through untouched and response handling is left to the caller.
  */
-async function fetchOrThrow(
+export async function fetchOrThrow(
   url: string,
   init: RequestInit,
   makeError: (message: string, cause: unknown) => ActsisLiteLLMError,

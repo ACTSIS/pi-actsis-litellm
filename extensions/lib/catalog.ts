@@ -51,6 +51,20 @@ interface CachedCatalogFile {
   version: number;
   fetchedAt: number;
   models: ProviderModelConfig[];
+  credential?: CachedCatalogScope;
+}
+
+/**
+ * Which credential/scope fetched the cached catalog (S3 of issue #48). The
+ * gateway scopes /v1/models per consent-chosen team for OAuth sessions, so a
+ * team-bound session legitimately lists an oc/*-only subset; users must
+ * re-login (and pick another team) to widen it. Additive v2 field: readers
+ * tolerate caches written before this existed.
+ */
+export interface CachedCatalogScope {
+  kind: "oauth" | "api_key";
+  userId?: string;
+  teamId?: string;
 }
 
 /**
@@ -368,11 +382,13 @@ export async function loadCachedModels(
 export async function saveCachedModels(
   cachePath: string,
   models: ProviderModelConfig[],
+  credential?: CachedCatalogScope,
 ): Promise<void> {
   const file: CachedCatalogFile = {
     version: CACHE_SCHEMA_VERSION,
     fetchedAt: Date.now(),
     models,
+    ...(credential ? { credential } : {}),
   };
 
   await mkdir(dirname(cachePath), { recursive: true });
@@ -398,6 +414,61 @@ export async function saveCachedModels(
     }
     throw err;
   }
+}
+
+export async function loadCachedScope(
+  cachePath: string,
+): Promise<CachedCatalogScope | null> {
+  try {
+    const raw = await readFile(cachePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const file = parsed as CachedCatalogFile;
+    if (file.version !== CACHE_SCHEMA_VERSION) return null;
+    const credential = file.credential;
+    if (!credential || typeof credential !== "object") return null;
+    if (credential.kind !== "oauth" && credential.kind !== "api_key") {
+      return null;
+    }
+    return credential;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Human-readable fetch-scope line for /models and /status. Unknown when the
+ * cache predates the scope metadata.
+ */
+export function catalogScopeLine(
+  scope: CachedCatalogScope | null,
+): string {
+  if (!scope) return "Catalog scope: unknown (cache predates scope metadata)";
+  if (scope.kind === "api_key") return "Catalog scope: API key";
+  const team = scope.teamId ? ` (team ${scope.teamId})` : " (no team)";
+  return `Catalog scope: OAuth session${team}`;
+}
+
+/**
+ * The oc/*-only + team-bound hint for issue #48: a session inherits its
+ * consent-chosen team's model list, so a restricted team hides locals and
+ * premium models. Only shown when the user can actually fix it by re-login.
+ */
+export function catalogScopeHint(
+  models: Array<{ id: string }>,
+  scope: CachedCatalogScope | null,
+): string | undefined {
+  if (!scope?.teamId) return undefined;
+  if (
+    models.length > 0 &&
+    models.every((m) => typeof m.id === "string" && m.id.startsWith("oc/"))
+  ) {
+    return (
+      "Only oc/* models are visible (session team scope). If you expect " +
+      "local or premium models, /login again and choose a team with that access."
+    );
+  }
+  return undefined;
 }
 
 export async function computeCacheAge(

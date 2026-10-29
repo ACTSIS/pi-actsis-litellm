@@ -1,5 +1,21 @@
 # Changelog
 
+## Sin publicar — 2026-10-29 — issues #48 y #47
+
+- Añadido: **`/actsis-litellm:image`** — generación de pixel-art vía
+  `POST /v1/images/generations` (`sdxl-pixel-art`), con flag `--size 512|768|1024`,
+  timeout client-side de al menos 180 s, mensaje custom renderizado en el
+  transcript (imagen inline si el terminal soporta kitty/iterm2) y copia .png
+  persistida; usa la misma credencial que el chat.
+- Añadido: la caché del catálogo guarda **qué credencial/equipo** la generó
+  (auth kind + userId + teamId, campo aditivo del schema v2);
+  `/actsis-litellm:models` y `/actsis-litellm:status` lo muestran y sugieren
+  re-login cuando una sesión ligada a un equipo ve solo modelos `oc/*`
+  (causa raíz de #48: el catálogo hereda la lista del equipo elegido en el
+  consent del login).
+- Docs: README con la semántica de scope del catálogo y la sección de
+  generación de imágenes.
+
 ## Sin publicar — 2026-10-22 — usage-subs: contrato v2 y tabla compacta
 
 - Añadido: **`/subs-usage` como ruta canónica** con fallback automático a
