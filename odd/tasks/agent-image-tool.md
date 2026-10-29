@@ -63,3 +63,9 @@ L3 (2026-10-29): Delivered — issue #50, PR #51, squash merge 61ed4aa to
    follow-up edit referencing the image, confirming the S1 flow.
    Note: unrelated pre-existing warning in the extension loader about
    gentle-engram's peerDependencies (typebox) — out of scope here.
+L4 (2026-10-29): Fix delivery — owner's cross-PC report: SDXL T2I ok,
+   edits with qwen-image-edit always 400. Root cause: tool multipart field
+   'files' unrecognized by LiteLLM's /v1/images/edits passthrough (request
+   forwarded without the multipart body). Fixed to 'image[]' + regression
+   test on the real FormData; verified end-to-end vs production (EDIT 200
+   in 144 s). Issue #52, PR #53, merge 15ef11a to main.
