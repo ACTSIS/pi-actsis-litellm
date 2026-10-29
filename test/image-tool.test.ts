@@ -115,6 +115,34 @@ describe("resolveImageInput / session store (S3/S5)", () => {
 });
 
 describe("fetchImageEdit", () => {
+  it("uses the image[] field name — required by the LiteLLM passthrough (regression for the 400)", async () => {
+    const originalFetch = globalThis.fetch;
+    let formData: FormData | null = null;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      assert.match(String(url), /\/v1\/images\/edits$/);
+      const req = new Request(String(url), init as RequestInit);
+      formData = await req.formData();
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }) as Response;
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      await fetchImageEdit(BASE_URL, "k", {
+        model: "qwen-image-edit",
+        prompt: "replace the cabin",
+        image: { data: PNG_B64, mimeType: "image/png" },
+      }, 5000);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const typed = formData as FormData | null;
+    assert.ok(typed, "multipart body expected");
+    assert.ok(typed.get("image[]"), "the image must travel as the image[] field");
+    assert.equal(typed.get("files"), null, "the files field is UNKNOWN to the LiteLLM images/edits passthrough (root cause of the 400)");
+    assert.equal(typed.get("prompt"), "replace the cabin");
+  });
+
   it("posts multipart to /v1/images/edits and extracts b64_json", async () => {
     let capturedMethod = "";
     let capturedUrl = "";

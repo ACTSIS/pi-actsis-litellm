@@ -174,8 +174,12 @@ export async function fetchImageEdit(
   form.append("model", options.model);
   form.append("prompt", options.prompt);
   form.append("n", "1");
+  // Field name matters all the way through LiteLLM's images/edits passthrough:
+  // "files" is unknown there and the request reaches the upstream without the
+  // multipart body (400 "Content-Type must be multipart/form-data"). The
+  // sd-server/OpenAI-compatible preferred field is "image[]" (legacy: "image").
   form.append(
-    "files",
+    "image[]",
     new Blob([Buffer.from(options.image.data, "base64")], { type: options.image.mimeType }),
     "input.png",
   );
