@@ -3,7 +3,13 @@ import { formatLocalDateTime } from "./datetime.ts";
 import path from "node:path";
 import { readFile, writeFile, rm, access, mkdir } from "node:fs/promises";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { Api, AuthResult, Model } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AuthResult,
+  ImageContent,
+  Model,
+  TextContent,
+} from "@earendil-works/pi-ai";
 import type { OAuthCredential } from "@earendil-works/pi-ai/compat";
 import { resolveConfig, type ActsisEnabledConfig } from "./config.ts";
 import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
@@ -17,7 +23,13 @@ import {
   resolveDefaultUsageRange,
   type UsageRange,
 } from "./usage.ts";
-import { AuthError, ConfigError } from "./errors.ts";
+import { AuthError, CommandError, ConfigError } from "./errors.ts";
+import {
+  fetchImageGeneration,
+  IMAGE_CUSTOM_TYPE,
+  parseImageArgs,
+  saveImageB64,
+} from "./image.ts";
 import { revokeToken, type CliAuthDiscovery } from "./client.ts";
 import { storedToDiscovery } from "./provider.ts";
 import {
@@ -45,6 +57,15 @@ export interface CommandDeps {
   authPath: string;
   prefsPath: string;
   requestTimeoutMs: number;
+  /** Session render hook for /image (issue #47 S2); absent = notify fallback. */
+  sendMessage?: (message: {
+    customType: string;
+    content: string | Array<TextContent | ImageContent>;
+    display: boolean;
+    details?: { filePath?: string };
+  }) => void;
+  /** Override for the image fallback directory (tests). */
+  imageSaveDir?: string;
 }
 
 export function defaultCommandDeps(): CommandDeps {
@@ -328,6 +349,87 @@ export function buildModelsCommandHandler(deps: CommandDeps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `actsis-litellm:models failed: ${message}`, "error");
+    }
+  };
+}
+
+export function buildImageCommandHandler(deps: CommandDeps) {
+  return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const providerId = getProviderId(deps);
+
+    let parsed;
+    try {
+      parsed = parseImageArgs(args);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notify(ctx, `actsis-litellm:image: ${message}`, "warning");
+      return;
+    }
+
+    try {
+      const cfg = await resolveStatusConfig(providerId, deps.authPath);
+      if (!cfg) {
+        notify(
+          ctx,
+          "Gateway not configured. Run /login and select this provider to set it up.",
+          "warning",
+        );
+        return;
+      }
+      // Same credential resolution as /usage and the budget widget (issue #47
+      // S6): AuthResult.auth.apiKey covers API-key and OAuth shapes.
+      const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
+      const apiKey = extractUsableApiKey(authResult);
+      if (!apiKey) {
+        notify(ctx, "No usable credential. Run /login first.", "warning");
+        return;
+      }
+
+      // Generation is synchronous (512² ≈ 14 s, 1024² ≈ 48 s); show progress
+      // instead of silence.
+      notify(
+        ctx,
+        `Generating ${parsed.size} pixel-art image (about 15-60 s)...`,
+        "info",
+      );
+
+      const result = await fetchImageGeneration(
+        cfg.baseUrl,
+        apiKey,
+        { prompt: parsed.prompt, model: parsed.model, size: parsed.size },
+        deps.requestTimeoutMs,
+      );
+      const data = result.images[0];
+      const imagePart: ImageContent = { type: "image", data, mimeType: "image/png" };
+
+      let filePath: string | undefined; // best-effort copy (R4-001)
+      try {
+        filePath = await saveImageB64(data, deps.imageSaveDir ?? os.tmpdir());
+      } catch {
+        notify(ctx, "File copy failed; image is still rendered", "warning");
+      }
+      const content: Array<TextContent | ImageContent> = [
+        { type: "text", text: `/image "${parsed.prompt}" — ${result.model} ${result.size}` },
+        imagePart,
+      ];
+
+      if (deps.sendMessage) {
+        // Displayed custom message: shows in the transcript without
+        // triggering a model turn (issue #47 S2/S5). details.filePath lets
+        // the renderer print the fallback path on text-only terminals.
+        deps.sendMessage({
+          customType: IMAGE_CUSTOM_TYPE,
+          content,
+          display: true,
+          details: { filePath },
+        });
+        notify(ctx, filePath ? `Saved copy: ${filePath}` : "File copy failed (image rendered in transcript)", "warning");
+      } else {
+        notify(ctx, `Image saved to ${filePath}`, "info");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notify(ctx, `actsis-litellm:image failed: ${message}`, "error");
     }
   };
 }

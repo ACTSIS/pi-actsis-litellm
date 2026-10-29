@@ -32,6 +32,12 @@ export class CatalogError extends ActsisLiteLLMError {
   }
 }
 
+export class ImageError extends ActsisLiteLLMError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("IMAGE_ERROR", message, options);
+  }
+}
+
 export class CommandError extends ActsisLiteLLMError {
   constructor(message: string, options?: ErrorOptions) {
     super("COMMAND_ERROR", message, options);

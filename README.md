@@ -64,6 +64,25 @@ The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **A
 | `/actsis-litellm:usage-subs` | Show Ollama Cloud per-subscription window usage (dashboard-style remaining % of the 5-hour and weekly windows, reset countdowns, credits), in the /usage table style with threshold-colored bars correlated to the elapsed window (pace escalation + projection when consumption runs ahead). Args: none. |
 | `/actsis-litellm:logout` | Revoke the OAuth refresh token on the gateway and clear local credentials and cache. |
 | `/actsis-litellm:budget` | Force a budget refresh and report the outcome as a notification. |
+| `/actsis-litellm:image` | Generate a pixel-art image with the gateway's `sdxl-pixel-art` model and render it in the session. Usage: `/image <prompt> [--size 512|768|1024]`. |
+
+## Image generation (/actsis-litellm:image)
+
+`/image <prompt>` calls `POST {gateway}/v1/images/generations` with the same
+credential used for chat (`sdxl-pixel-art`, `n=1`, `output_format: "png"`) and
+renders the returned `b64_json` inline in the transcript when the terminal
+supports image protocols (kitty/iterm2); otherwise the png copy (always saved
+under the session temp dir) keeps the result at hand. The file path is shown
+in both cases.
+
+- **Flags:** `--size 512|768|1024` (rendered as WIDTHxHEIGHT; default 512 for
+  latency), anywhere in the args. Seed/steps/cfg are not OpenAI-images fields.
+- **Timeout:** at least 180 s client-side (generation is synchronous, ~14-48 s
+  measured); a gateway failure surfaces a friendly error, and any spend is
+  visible in `/usage`.
+- **Model picker untouched:** image models keep their non-chat mode and stay
+  excluded from the chat picker.
+
 
 ## Login flow
 

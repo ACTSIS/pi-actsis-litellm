@@ -16,11 +16,14 @@ import {
   buildLogoutHandler,
   buildUsageHandler,
   buildUsageSubsHandler,
+  buildImageCommandHandler,
   defaultCommandDeps,
   extractUsableApiKey,
   buildTopHandler,
   readTopModelsWidgetEnabled,
 } from "./lib/commands.ts";
+import { IMAGE_CUSTOM_TYPE } from "./lib/image.ts";
+import { imageMessageRenderer } from "./lib/image-renderer.ts";
 import { normalizeOverflowError } from "./lib/overflow.ts";
 import {
   normalizeLimitError,
@@ -388,6 +391,12 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   // Register commands first; they work independently of provider registration.
   const commandDeps = defaultCommandDeps();
   commandDeps.getState = () => state;
+  // /image renders its result as a displayed custom message (issue #47 S2);
+  // the pipeline is UI-owned so the handler stays testable without pi.
+  commandDeps.sendMessage = (message) => {
+    pi.sendMessage(message);
+  };
+  pi.registerMessageRenderer(IMAGE_CUSTOM_TYPE, imageMessageRenderer);
   topModelsPrefsPath = commandDeps.prefsPath;
 
   pi.registerCommand("actsis-litellm:status", {
@@ -410,6 +419,12 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     description:
       "Show per-subscription Ollama Cloud usage (system-local generation date; reset countdowns: 5h hours/minutes, weekly days/hours)",
     handler: buildUsageSubsHandler(commandDeps),
+  });
+
+  pi.registerCommand("actsis-litellm:image", {
+    description:
+      "Generate a pixel-art image (sdxl-pixel-art) and render it in the session; usage: /image <prompt> [--size 512|768|1024]",
+    handler: buildImageCommandHandler(commandDeps),
   });
 
   pi.registerCommand("actsis-litellm:logout", {
