@@ -69,3 +69,8 @@ L4 (2026-10-29): Fix delivery — owner's cross-PC report: SDXL T2I ok,
    forwarded without the multipart body). Fixed to 'image[]' + regression
    test on the real FormData; verified end-to-end vs production (EDIT 200
    in 144 s). Issue #52, PR #53, merge 15ef11a to main.
+L5 (2026-10-29): Description fix — owner's local session: asked for a 3D
+   render, the agent inferred "qwen-image-edit = edit-only" from the name +
+   description wording and re-styled a pixel-art image instead. Reworked
+   description (both use cases per model; sdxl style baked in; 3D/realistic
+   routing guidance) + regression test. Issue #54, PR #55, merge ba66e11.
