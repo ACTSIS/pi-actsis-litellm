@@ -21,6 +21,7 @@ import {
   loadCachedModels,
   saveCachedModels,
   computeCacheAge,
+  type CachedCatalogScope,
 } from "./catalog.ts";
 import { fetchBudgetInfo, formatBudgetLine } from "./budget.ts";
 import { readStoredCredentialGatewayUrl } from "./gateway-url.ts";
@@ -42,6 +43,7 @@ interface ProviderBuildDeps {
   saveCachedModels: (
     cachePath: string,
     models: ProviderModelConfig[],
+    credential?: CachedCatalogScope,
   ) => Promise<void>;
   computeCacheAge: (cachePath: string) => Promise<number | null>;
   onLoginSuccess?: (gatewayUrl: string) => Promise<void>;
@@ -340,6 +342,21 @@ export async function buildProviderConfig(
       return storedModels;
     }
 
+    // Record which credential/scope fetched the catalog (issue #48). The
+    // synthetic api_key login carries authMode "api_key"; OAuth sessions get
+    // their consent-chosen team id so /models can explain an oc/*-only list.
+    const scope: CachedCatalogScope = {
+      kind: (credential as unknown as { authMode?: string })?.authMode === "api_key"
+        ? "api_key"
+        : "oauth",
+      ...(typeof (credential as unknown as { userId?: unknown })?.userId === "string"
+        ? { userId: (credential as unknown as { userId?: string }).userId }
+        : {}),
+      ...(typeof (credential as unknown as { teamId?: unknown })?.teamId === "string"
+        ? { teamId: (credential as unknown as { teamId?: string }).teamId }
+        : {}),
+    };
+
     const refreshCfg = await (async (): Promise<ActsisEnabledConfig | null> => {
       if (baseUrl) {
         // Prefer the base URL this provider was built with (passed at build
@@ -380,7 +397,7 @@ export async function buildProviderConfig(
     // sessions). The fetched models are still returned for this refresh; the
     // next refresh retries persistence.
     try {
-      await saveCache(CACHE_PATH, freshModels);
+      await saveCache(CACHE_PATH, freshModels, scope);
     } catch {
       // Cache write failure is non-fatal: catalog remains usable in memory.
     }

@@ -24,7 +24,13 @@ import {
   fetchUsageSubs,
   formatUsageSubsLines,
 } from "./usage-subs.ts";
-import { loadCachedModels, computeCacheAge } from "./catalog.ts";
+import {
+  loadCachedModels,
+  loadCachedScope,
+  catalogScopeLine,
+  catalogScopeHint,
+  computeCacheAge,
+} from "./catalog.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { LiteLLMExtensionState } from "../index.ts";
 
@@ -231,6 +237,7 @@ export function buildStatusHandler(deps: CommandDeps) {
 
       const count = providerModels(ctx.modelRegistry.getAll(), providerId).length;
       const age = await computeCacheAge(deps.cachePath);
+      const scope = await loadCachedScope(deps.cachePath);
 
       let budgetLine: string | null = null;
       try {
@@ -259,6 +266,7 @@ export function buildStatusHandler(deps: CommandDeps) {
         authLine,
         sourceLine,
         `Catalog: ${count} models for provider, cache age: ${formatCacheAge(age)}`,
+        catalogScopeLine(scope),
         `Gateway: ${cfg.baseUrl}`,
       ];
       if (budgetLine) {
@@ -304,6 +312,16 @@ export function buildModelsCommandHandler(deps: CommandDeps) {
         if (added > 0 || removed > 0) {
           message += ` (added ${added}, removed ${removed})`;
         }
+      }
+
+      // Issue #48: document which credential/scope the catalog was fetched
+      // with, and hint at re-login when a team-constrained session can only
+      // see oc/* models.
+      const scope = await loadCachedScope(deps.cachePath);
+      message += `\n${catalogScopeLine(scope)}`;
+      const hint = catalogScopeHint(current, scope);
+      if (hint) {
+        message += `\n${hint}`;
       }
 
       notify(ctx, message, "info");

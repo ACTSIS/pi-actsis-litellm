@@ -58,8 +58,8 @@ The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **A
 | Command | Description |
 |---------|-------------|
 | `/login` | pi's native login flow. Once this provider is registered, select `actsis-litellm` to authenticate. |
-| `/actsis-litellm:status` | Show provider registration, credential state and source, catalog count, cache age, gateway URL, and a budget summary (stored credentials). |
-| `/actsis-litellm:models` | Force a fresh model catalog sync and show added/removed models. |
+| `/actsis-litellm:status` | Show provider registration, credential state and source, catalog count, cache age, fetch scope, gateway URL, and a budget summary (stored credentials). |
+| `/actsis-litellm:models` | Force a fresh model catalog sync and show added/removed models, plus the credential/scope the catalog was fetched with (issue: team-bound sessions may list only `oc/*` models). |
 | `/actsis-litellm:usage` | Show per-model usage (spend, tokens, requests). Args: nothing (last 30 days), a day count like `14`, or a range like `2025-03-01 .. 2025-03-31`. |
 | `/actsis-litellm:usage-subs` | Show Ollama Cloud per-subscription window usage (dashboard-style remaining % of the 5-hour and weekly windows, reset countdowns, credits), in the /usage table style with threshold-colored bars correlated to the elapsed window (pace escalation + projection when consumption runs ahead). Args: none. |
 | `/actsis-litellm:logout` | Revoke the OAuth refresh token on the gateway and clear local credentials and cache. |
@@ -99,6 +99,7 @@ The provider's model list is synced from the gateway at `/v1/models` (called wit
 - **Capabilities:** `supports_vision` adds image input. Every model is registered as reasoning-capable with `supportsDeveloperRole: false` compatibility.
 - **Context defaults:** `contextWindow` and `maxTokens` default to `128000` and `16384` when the gateway does not report them.
 - **Failure behavior:** Catalog refresh never throws. If the network fetch, cache write, or models-store publish fails, pi keeps showing the last known models; the next refresh retries persistence.
+- **Fetch credential and scope:** The catalog is always fetched with the same credential used for chat calls — the OAuth session token after an SSO login, or the stored API key (recorded in the cache as `credential`). The gateway scopes `/v1/models` per session: OAuth sessions inherit the model list of the team chosen at the login consent screen (`credential.teamId`), so a session bound to a standard-only team legitimately lists an `oc/*`-only catalog — the extension does not widen it. If local or premium models are missing, run `/login` again and choose a team with that access; `/actsis-litellm:models` and `/actsis-litellm:status` show the fetch scope of the last sync and hint at this when a team-bound session lists only `oc/*` models.
 - **Models store:** After each successful sync the catalog is also published to pi's persistent models store, so model metadata (context window, prices) stays fresh in the `/model` picker.
 - **Overrides:** You can override any model's metadata via pi's `models.json` `modelOverrides` mechanism.
 
