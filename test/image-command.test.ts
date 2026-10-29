@@ -1,4 +1,4 @@
-import { describe, it, before, afterEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -160,9 +160,13 @@ describe("/image command", () => {
   let originalEnv: string | undefined;
   before(() => {
     originalEnv = process.env.ACTSIS_LITELLM_URL;
+  });
+  beforeEach(() => {
+    // Set per test: the suite-level afterEach must not leak a restore that
+    // leaves later tests without a gateway URL (CI has no ~/.pi files).
     process.env.ACTSIS_LITELLM_URL = BASE_URL;
   });
-  afterEach(() => {
+  after(() => {
     if (originalEnv === undefined) delete process.env.ACTSIS_LITELLM_URL;
     else process.env.ACTSIS_LITELLM_URL = originalEnv;
   });
