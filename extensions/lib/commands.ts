@@ -88,11 +88,11 @@ export function defaultCommandDeps(): CommandDeps {
   };
 }
 
-function getProviderId(deps: CommandDeps): string {
+export function getProviderId(deps: CommandDeps): string {
   return deps.getState().providerId?.trim() || DEFAULT_PROVIDER_ID;
 }
 
-async function resolveStatusConfig(
+export async function resolveStatusConfig(
   providerId: string,
   authPath: string,
 ): Promise<ActsisEnabledConfig | null> {

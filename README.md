@@ -65,6 +65,7 @@ The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **A
 | `/actsis-litellm:logout` | Revoke the OAuth refresh token on the gateway and clear local credentials and cache. |
 | `/actsis-litellm:budget` | Force a budget refresh and report the outcome as a notification. |
 | `/actsis-litellm:image` | Generate a pixel-art image with the gateway's `sdxl-pixel-art` model and render it in the session. Usage: `/image <prompt> [--size 512|768|1024]`. |
+| `generate_image` (tool) | Model-callable tool: the agent generates OR EDITS images from natural chat requests; models are discovered from the gateway (`/v1/models`, mode=image_generation), the user picks when relevant; edits take `image="last"` (last generated in session) or a file path. |
 
 ## Image generation (/actsis-litellm:image)
 

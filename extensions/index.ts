@@ -14,6 +14,8 @@ import {
   buildStatusHandler,
   buildModelsCommandHandler,
   buildLogoutHandler,
+  getProviderId,
+  resolveStatusConfig,
   buildUsageHandler,
   buildUsageSubsHandler,
   buildImageCommandHandler,
@@ -24,6 +26,11 @@ import {
 } from "./lib/commands.ts";
 import { IMAGE_CUSTOM_TYPE } from "./lib/image.ts";
 import { imageMessageRenderer } from "./lib/image-renderer.ts";
+import {
+  buildGenerateImageTool,
+  discoverImageModels,
+  ImageSessionStore,
+} from "./lib/image-tool.ts";
 import { normalizeOverflowError } from "./lib/overflow.ts";
 import {
   normalizeLimitError,
@@ -397,6 +404,54 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
     pi.sendMessage(message);
   };
   pi.registerMessageRenderer(IMAGE_CUSTOM_TYPE, imageMessageRenderer);
+
+  // Model-callable image tool (issue #47 v2; specs in odd/tasks/agent-image-tool.md)
+  // — natural image generation/editing from chat. The tool description is
+  // refreshed (S2) with the gateway's DISCOVERED image models, never hardcoded.
+  const imageStore = new ImageSessionStore();
+  const imageToolDeps = {
+    getProviderId: () => getProviderId(commandDeps),
+    authPath: commandDeps.authPath,
+    requestTimeoutMs: commandDeps.requestTimeoutMs,
+    imageSaveDir: commandDeps.imageSaveDir,
+    store: imageStore,
+    sendMessage: (message: unknown) => {
+      pi.sendMessage(message as Parameters<typeof pi.sendMessage>[0]);
+    },
+    resolveStatusConfig,
+    getUsableApiKey: async (providerId: string, ctx: unknown): Promise<string | null> => {
+      const registry = (ctx as {
+        modelRegistry?: { getProviderAuth?(providerId: string): Promise<unknown> };
+      }).modelRegistry;
+      if (!registry?.getProviderAuth) return null;
+      const authResult = await registry.getProviderAuth(providerId);
+      return extractUsableApiKey(authResult);
+    },
+  };
+  pi.registerTool(buildGenerateImageTool(imageToolDeps));
+
+  // S2 dynamic description: re-register (replace) throttled with the
+  // DISCOVERED image models; on any failure the current registration stays.
+  let imageModelsCache: { ids: string[]; ts: number } = { ids: [], ts: 0 };
+  pi.on("before_agent_start", async (_event, ctx) => {
+    if (Date.now() - imageModelsCache.ts < 300_000) return;
+    try {
+      const providerId = getProviderId(commandDeps);
+      const cfg = await resolveStatusConfig(providerId, commandDeps.authPath);
+      if (!cfg) return;
+      const authResult = await ctx.modelRegistry.getProviderAuth(providerId);
+      const apiKey = extractUsableApiKey(authResult);
+      if (!apiKey) return;
+      const options = await discoverImageModels(cfg.baseUrl, apiKey);
+      const ids = options.map((o) => o.id);
+      imageModelsCache = { ids, ts: Date.now() };
+      if (ids.length > 0) {
+        pi.registerTool(buildGenerateImageTool({ ...imageToolDeps, descriptionModels: ids }));
+      }
+    } catch {
+      // Catalog unreachable: keep the current description (calls discover live).
+    }
+  });
   topModelsPrefsPath = commandDeps.prefsPath;
 
   pi.registerCommand("actsis-litellm:status", {
