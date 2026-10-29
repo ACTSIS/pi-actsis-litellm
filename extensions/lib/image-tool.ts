@@ -26,7 +26,11 @@ interface ModelEntry {
 }
 
 export const EDIT_MODEL_HINT = "edit";
-export const IMAGE_TOOL_NAME = "actsis-litellm:generate_image";
+// Model-safe name: only [a-zA-Z0-9_-] (ChatGPT Responses input[].name and
+// Claude tool names reject ":" — ":" in a session history 400s the whole
+// request against openai-sub/claude-sub; the /actsis-litellm:* prefix stays
+// for COMMANDS which models never see)
+export const IMAGE_TOOL_NAME = "actsis-litellm_generate_image";
 
 /** Adaptive timeout by model family and size (S4): generation is synchronous. */
 export function imageToolTimeoutMs(model: string, size: string): number {

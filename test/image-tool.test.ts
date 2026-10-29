@@ -322,7 +322,8 @@ describe("toolDescription", () => {
     assert.match(toolDescription([]), /discover at call time/);
   });
 
-  it("keeps a stable tool name", () => {
-    assert.equal(IMAGE_TOOL_NAME, "actsis-litellm:generate_image");
+  it("keeps a model-safe tool name (no colon: ChatGPT/Claude reject it in history)", () => {
+    assert.equal(IMAGE_TOOL_NAME, "actsis-litellm_generate_image");
+    assert.match(IMAGE_TOOL_NAME, /^[a-zA-Z0-9_-]+$/);
   });
 });
