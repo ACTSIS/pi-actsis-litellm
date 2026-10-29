@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, writeFile } from "node:fs/promises";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 import {
   extractImageModelIds,
   resolveImageModel,
@@ -13,6 +14,7 @@ import {
   buildGenerateImageTool,
   toolDescription,
   IMAGE_TOOL_NAME,
+  withHeartbeat,
 } from "../extensions/lib/image-tool.ts";
 import { CommandError, ImageError } from "../extensions/lib/errors.ts";
 
@@ -73,12 +75,14 @@ describe("resolveImageModel (S2 policy)", () => {
   });
 });
 
-describe("imageToolTimeoutMs (S4)", () => {
-  it("scales by model family and width", () => {
-    assert.equal(imageToolTimeoutMs("qwen-image-edit", "1024x1024"), 600_000);
+describe("imageToolTimeoutMs (S2)", () => {
+  it("budgets by model family and the longest side actually requested", () => {
     assert.equal(imageToolTimeoutMs("qwen-image-edit", "512x512"), 300_000);
-    assert.equal(imageToolTimeoutMs("sdxl-pixel-art", "512x512").valueOf(), 180_000);
-    assert.equal(imageToolTimeoutMs("sdxl-pixel-art", "1024x1024").valueOf(), 180_000);
+    assert.equal(imageToolTimeoutMs("Qwen-Image-Edit", "768x768"), 1_500_000);
+    assert.equal(imageToolTimeoutMs("qwen-image-edit", "1024x1024"), 1_500_000);
+    assert.equal(imageToolTimeoutMs("sdxl-pixel-art", "512x512"), 180_000);
+    assert.equal(imageToolTimeoutMs("sdxl-pixel-art", "1024x1024"), 180_000);
+    assert.equal(imageToolTimeoutMs("some-other-family", "768x768"), 180_000);
   });
 });
 
@@ -190,12 +194,138 @@ describe("fetchImageEdit", () => {
       new Response("boom", { status: 500 })) as unknown as typeof globalThis.fetch;
     try {
       await assert.rejects(
-        () => fetchImageEdit(BASE_URL, "k", { model: "m", prompt: "p", image: { data: PNG_B64, mimeType: "image/png" } }, 5000),
+        () => fetchImageEdit(BASE_URL, "k", { model: "m", prompt: "p", image: { data: PNG_B64, mimeType: "image/png" }, size: "512x512" }, 5000),
         (err: unknown) => err instanceof Error && err instanceof ImageError && /usage/.test(err.message),
       );
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("S1: sends the target size as a multipart size field (512 default and 1024)", async () => {
+    const originalFetch = globalThis.fetch;
+    const forms: FormData[] = [];
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      assert.match(String(url), /\/v1\/images\/edits$/);
+      const req = new Request(String(url), init as RequestInit);
+      forms.push(await req.formData());
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }) as Response;
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      await fetchImageEdit(BASE_URL, "k", {
+        model: "qwen-image-edit",
+        prompt: "p",
+        image: { data: PNG_B64, mimeType: "image/png" },
+      }, 5000);
+      await fetchImageEdit(BASE_URL, "k", {
+        model: "qwen-image-edit",
+        prompt: "p",
+        image: { data: PNG_B64, mimeType: "image/png" },
+        size: "1024x1024",
+      }, 5000);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.equal(forms.length, 2);
+    assert.equal(forms[0].get("size"), "512x512");
+    assert.equal(forms[1].get("size"), "1024x1024");
+  });
+
+  it("S4: rewrites a client-side timeout as an abandoned-render message", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const err = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      throw err;
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      await assert.rejects(
+        () => fetchImageEdit(BASE_URL, "k", {
+          model: "qwen-image-edit",
+          prompt: "p",
+          image: { data: PNG_B64, mimeType: "image/png" },
+          size: "512x512",
+        }, 5_000),
+        (err: unknown) => {
+          assert.ok(err instanceof ImageError);
+          assert.match((err as Error).message, /abandoned by the client after \d+s of a 5s budget/);
+          assert.match((err as Error).message, /render may still be running in the backend and keeps the GPU busy/);
+          assert.doesNotMatch((err as Error).message, /Failed to reach gateway images edits endpoint/);
+          return true;
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("S4: keeps the gateway-unreachable wording for non-timeout network failures", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const err = new TypeError("fetch failed") as unknown as Error & { cause: Error };
+      err.cause = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
+      throw err;
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      await assert.rejects(
+        () => fetchImageEdit(BASE_URL, "k", {
+          model: "qwen-image-edit",
+          prompt: "p",
+          image: { data: PNG_B64, mimeType: "image/png" },
+          size: "512x512",
+        }, 5_000),
+        (err: unknown) => {
+          assert.ok(err instanceof ImageError);
+          assert.match((err as Error).message, /Failed to reach gateway images edits endpoint/);
+          assert.doesNotMatch((err as Error).message, /abandoned after/);
+          return true;
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe("withHeartbeat (S3)", () => {
+  it("reports elapsed seconds while pending and clears the timer on success and error", async () => {
+    const updates: string[] = [];
+    const onUpdate = ((u: { content: Array<{ type: string; text?: string }> }) => {
+      const text = (u.content as Array<{ type: string; text?: string }>)[0]?.text;
+      if (text) updates.push(text);
+    }) as unknown as AgentToolUpdateCallback;
+
+    const success = await withHeartbeat(
+      new Promise<string>((resolve) => setTimeout(() => resolve("ok"), 120)),
+      onUpdate,
+      50,
+    );
+    assert.equal(success, "ok");
+    assert.ok(
+      updates.some((t) => /\d+s elapsed/.test(t)),
+      `expected elapsed seconds in heartbeat, got: ${updates.join(", ")}`,
+    );
+
+    // Ensure the interval is cleared after settlement: no more updates arrive.
+    const countAfterSuccess = updates.length;
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(updates.length, countAfterSuccess, "heartbeat leaked after success");
+
+    updates.length = 0;
+    await assert.rejects(
+      withHeartbeat(
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("boom")), 80)),
+        onUpdate,
+        50,
+      ),
+      /boom/,
+    );
+    assert.ok(updates.some((t) => /\d+s elapsed/.test(t)), "heartbeat expected on rejected promise");
+    const countAfterError = updates.length;
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(updates.length, countAfterError, "heartbeat leaked after error");
   });
 });
 

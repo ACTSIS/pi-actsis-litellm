@@ -74,3 +74,18 @@ L5 (2026-10-29): Description fix — owner's local session: asked for a 3D
    description wording and re-styled a pixel-art image instead. Reworked
    description (both use cases per model; sdxl style baked in; 3D/realistic
    routing guidance) + regression test. Issue #54, PR #55, merge ba66e11.
+
+L6 (2026-10-29, fix T3 image-edit-resolution-cap S1-S4): La edición heredaba
+   las dimensiones de la imagen de referencia (1920x1329 → render 1920x1336,
+   timeout client-side 23 y GPU ocupada 10 min después del abort). Se añadió a
+   `fetchImageEdit` el campo multipart `size=WIDTHxHEIGHT` derivado del
+   parámetro `size` de la tool (S1); el timeout se presupuesta ahora desde
+   el tamaño realmente enviado: qwen 512 = 300 s, qwen 768/1024 = 1500 s,
+   otras familias = 180 s (S2). Mientras la petición está en vuelo se reporta
+   un heartbeat de segundos transcurridos vía `onUpdate` cada 30 s como máximo
+   (S3). Un timeout client-side en edición ya no acusa al gateway de no
+   responder; el mensaje indica que la petición fue abandonada tras agotar el
+   presupuesto y advierte que el render puede seguir corriendo en el backend
+   ocupando la GPU (S4). Evidencia: LiteLLM v1.106.2 reenvía `size` al
+   upstream (upstream registró `generate_image 512x512` para una referencia
+   1920x1329). PR pendiente de revisión.
