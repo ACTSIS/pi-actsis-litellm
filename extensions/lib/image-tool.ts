@@ -1,0 +1,364 @@
+import { fetchOrThrow } from "./client.ts";
+import { AuthError, CommandError, ImageError } from "./errors.ts";
+import { fetchImageGeneration, saveImageB64, IMAGE_DEFAULT_MODEL } from "./image.ts";
+import type { AgentToolUpdateCallback, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import { Type, type Static } from "typebox";
+
+/**
+ * Model-callable image generation/editing tool (issue #47 v2 — natural chat
+ * requests; owner spec S1-S5 in odd/tasks/agent-image-tool.md).
+ *
+ * The tool description carries the DISCOVERED image models so the agent can
+ * ask the user which one to use; selection policy (S2) is applied inside:
+ * explicit param > heuristic (an image input present -> editing model) >
+ * gateway default (sdxl-pixel-art).
+ */
+
+export interface ImageModelOption {
+  id: string;
+}
+
+interface ModelEntry {
+  id?: unknown;
+  mode?: unknown;
+  model_info?: { mode?: unknown };
+}
+
+export const EDIT_MODEL_HINT = "edit";
+export const IMAGE_TOOL_NAME = "actsis-litellm:generate_image";
+
+/** Adaptive timeout by model family and size (S4): generation is synchronous. */
+export function imageToolTimeoutMs(model: string, size: string): number {
+  const w = parseInt(size.split("x")[0] ?? "512", 10) || 512;
+  if (model.toLowerCase().includes("qwen")) return w >= 1024 ? 600_000 : 300_000;
+  return Math.max(180_000, w >= 1024 ? 180_000 : 120_000);
+}
+
+/** Map the gateway's /v1/models to the available image model ids. */
+export function extractImageModelIds(body: unknown): string[] {
+  const data =
+    body !== null && typeof body === "object" &&
+    Array.isArray((body as Record<string, unknown>).data)
+      ? ((body as Record<string, unknown>).data as unknown[])
+      : [];
+  const ids: string[] = [];
+  for (const entry of data) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as ModelEntry;
+    const id = typeof e.id === "string" ? e.id : "";
+    if (!id) continue;
+    let mode: unknown = e.mode;
+    if (mode === undefined && e.model_info && typeof e.model_info === "object") {
+      mode = (e.model_info as { mode?: unknown }).mode;
+    }
+    if (mode === "image_generation") ids.push(id);
+  }
+  return ids;
+}
+
+export async function discoverImageModels(
+  baseUrl: string,
+  apiKey: string,
+  timeoutMs = 15_000,
+): Promise<ImageModelOption[]> {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  const response = await fetchOrThrow(
+    `${normalized}/v1/models?include_metadata=true`,
+    {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(timeoutMs ?? 15_000),
+    },
+    (message, cause) => new ImageError(message, { cause }),
+    "Failed to discover image models",
+  );
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return [];
+  }
+  return extractImageModelIds(body).map((id) => ({ id }));
+}
+
+/**
+ * S2 policy: explicit param (validated against the discovered list when the
+ * gateway answers) > heuristic (image input -> the editing-capable model) >
+ * IMAGE_DEFAULT_MODEL.
+ */
+export function resolveImageModel(
+  explicit: string | undefined,
+  hasImageInput: boolean,
+  discovered: string[] = [],
+): { model: string; askedHint: boolean } {
+  if (explicit && explicit.length > 0) {
+    const id = discovered.includes(explicit)
+      ? explicit
+      : (discovered.find((m) => m.startsWith(explicit)) ?? explicit);
+    return { model: id, askedHint: false };
+  }
+  if (hasImageInput) {
+    const editModel = discovered.find((m) => m.toLowerCase().includes(EDIT_MODEL_HINT))
+      ?? `qwen-image-${EDIT_MODEL_HINT}`;
+    return { model: editModel, askedHint: true };
+  }
+  if (discovered.includes(IMAGE_DEFAULT_MODEL) || discovered.length === 0) {
+    return { model: IMAGE_DEFAULT_MODEL, askedHint: false };
+  }
+  // The documented default isn't available in this gateway: fall back to the
+  // first discovered image model instead of failing the request.
+  return { model: discovered[0], askedHint: true };
+}
+
+/** Session store for follow-up edits ("last" reference, S3/S5). */
+export interface SessionImage {
+  data: string; // base64 png
+  mimeType: string;
+  filePath?: string;
+}
+
+export class ImageSessionStore {
+  private last_: SessionImage | null = null;
+  set(image: SessionImage): void {
+    this.last_ = image;
+  }
+  get(): SessionImage | null {
+    return this.last_;
+  }
+  clear(): void {
+    this.last_ = null;
+  }
+}
+
+const MIME_MAP = new Map<string, string>([
+  [".png", "image/png"], [".jpg", "image/jpeg"], [".jpeg", "image/jpeg"],
+  [".webp", "image/webp"],
+]);
+
+/** Resolve the tool's image input: "last" (S3) or a filesystem path. */
+export async function resolveImageInput(
+  input: string,
+  store: ImageSessionStore,
+): Promise<SessionImage> {
+  if (input === "last" || input === "última" || input === "last_image") {
+    const prev = store.get();
+    if (!prev) {
+      throw new CommandError(
+        'No previous image in this session: generate one first or pass a file path.',
+      );
+    }
+    return prev;
+  }
+  const { readFile } = await import("node:fs/promises");
+  const path = await import("node:path");
+  const ext = path.extname(input).toLowerCase();
+  const mimeType = MIME_MAP.get(ext);
+  if (!mimeType) {
+    throw new CommandError(
+      `Unsupported image type "${ext || "(none)"}" (png/jpg/jpeg/webp expected)`,
+    );
+  }
+  const data = (await readFile(input)).toString("base64");
+  return { data, mimeType, filePath: input };
+}
+
+/** Multipart edit request (S3) — mirrors fetchImageGeneration's error shapes. */
+export async function fetchImageEdit(
+  baseUrl: string,
+  apiKey: string,
+  options: { model: string; prompt: string; image: SessionImage },
+  timeoutMs?: number,
+): Promise<ImageGenerationResultShape> {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  const form = new FormData();
+  form.append("model", options.model);
+  form.append("prompt", options.prompt);
+  form.append("n", "1");
+  form.append(
+    "files",
+    new Blob([Buffer.from(options.image.data, "base64")], { type: options.image.mimeType }),
+    "input.png",
+  );
+  const response = await fetchOrThrow(
+    `${normalized}/v1/images/edits`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(timeoutMs ?? 180_000),
+    },
+    (message, cause) => new ImageError(message, { cause }),
+    "Failed to reach gateway images edits endpoint",
+  );
+  if (response.status === 401 || response.status === 403) {
+    throw new AuthError("Credential rejected by gateway. Run /login again.");
+  }
+  if (!response.ok) {
+    throw new ImageError(
+      `Image edit failed: ${response.status}: ${response.statusText} (spend, if any, shows in /usage)`,
+    );
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (err) {
+    throw new ImageError(
+      `Images edits response is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+  const data =
+    body !== null && typeof body === "object" &&
+    Array.isArray((body as Record<string, unknown>).data)
+      ? ((body as Record<string, unknown>).data as unknown[])
+      : null;
+  const images: string[] = [];
+  if (data) {
+    for (const entry of data) {
+      if (typeof entry === "object" && entry !== null) {
+        const b64 = (entry as Record<string, unknown>).b64_json;
+        if (typeof b64 === "string" && b64.length > 0) images.push(b64);
+      }
+    }
+  }
+  if (images.length === 0) {
+    throw new ImageError("Images edits response had no b64_json payloads");
+  }
+  return { images, model: options.model };
+}
+
+interface ImageGenerationResultShape {
+  images: string[];
+  model: string;
+  size?: string;
+}
+
+export function toolDescription(models: string[]): string {
+  const options = models.length > 0
+    ? models.map((m) => `- ${m}`).join("\n")
+    : "- (discover at call time — the gateway catalog defines the options)";
+  return [
+    "Generate or edit an image through the ACTSIS gateway (stable-diffusion.cpp",
+    "models on the Strix Halo workstation). Use this tool when the user asks",
+    "for an image in natural language, or to edit an existing image.",
+    "Available image models (ask the user which one they want when it is not",
+    "obvious; edits always need a reference image):",
+    options,
+    "Selection rules: an explicit `model` param wins; with an `image` input",
+    "default to the editing-capable model (qwen-image-edit); otherwise the",
+    "gateway default (sdxl-pixel-art). Report the rendered result and mention",
+    "that large sizes are slower (qwen 1024 ~5 min).",
+  ].join("\n");
+}
+
+export interface GenerateImageToolDeps {
+  providerId?: string;
+  getProviderId?: () => string;
+  authPath: string;
+  requestTimeoutMs?: number;
+  sendMessage: (message: unknown) => void;
+  imageSaveDir?: string;
+  store?: ImageSessionStore;
+  /** Discovered image model ids for the tool description (S2 — never
+   *  hardcoded; empty list falls back to a discover-at-call-time text). */
+  descriptionModels?: string[];
+  /** Resolved gateway URL, same source as /image (/status config). */
+  resolveStatusConfig: (
+    providerId: string,
+    authPath: string,
+  ) => Promise<{ baseUrl: string } | null>;
+  getUsableApiKey: (providerId: string, ctx: unknown) => Promise<string | null>;
+}
+
+const toolParams = () =>
+  Type.Object({
+    prompt: Type.String({ description: "Image description or edit instruction" }),
+    size: Type.Optional(Type.String({ description: "512 (default), 768 or 1024 — rendered as WIDTHxHEIGHT" })),
+    model: Type.Optional(Type.String({ description: "Image model id from this description's list (e.g. sdxl-pixel-art, qwen-image-edit)" })),
+    image: Type.Optional(Type.String({ description: "Optional image input for edits: 'last' for the last generated image in this session, or a file path (png/jpg/webp)" })),
+  });
+
+/**
+ * Built tool registration object for pi.registerTool (T3). execute() returns
+ * the tool result (text summary + metadata); the rendered image travels as
+ * the displayed custom message via deps.sendMessage, like /image does.
+ */
+export function buildGenerateImageTool(deps: GenerateImageToolDeps) {
+  const store = deps.store ?? new ImageSessionStore();
+  return {
+    name: IMAGE_TOOL_NAME,
+    label: "Generate image (ACTSIS gateway)",
+    description: toolDescription(deps.descriptionModels ?? []),
+    parameters: toolParams(),
+    async execute(
+      _toolCallId: string,
+      params: Static<ReturnType<typeof toolParams>>,
+      signal: AbortSignal | undefined,
+      onUpdate: AgentToolUpdateCallback | undefined,
+      _ctx: unknown,
+    ): Promise<{ content: Array<TextContent>; details: Record<string, unknown> }> {
+      const size = `${parseInt(params.size ?? "512", 10) || 512}x${parseInt(params.size ?? "512", 10) || 512}`;
+      const providerId = deps.getProviderId?.() ?? deps.providerId ?? "actsis-litellm";
+      const cfg = await deps.resolveStatusConfig(providerId, deps.authPath);
+      if (!cfg) throw new CommandError("Gateway not configured. Run /login first.");
+      const apiKey = await deps.getUsableApiKey(providerId, _ctx);
+      if (!apiKey) throw new CommandError("No usable credential. Run /login first.");
+
+      const imageInput = params.image
+        ? await resolveImageInput(params.image, store)
+        : null;
+      const discoveredModels: string[] = await discoverImageModels(
+        cfg.baseUrl,
+        apiKey,
+      )
+        .then((options) => options.map((o) => o.id))
+        .catch(() => []);
+      const { model } = resolveImageModel(
+        params.model,
+        imageInput !== null,
+        discoveredModels,
+      );
+      if (!model) throw new CommandError("No suitable image model found in the gateway catalog.");
+
+      onUpdate?.({
+        content: [{
+          type: "text",
+          text: `Generating ${size} image with ${model}${imageInput ? " (edit)" : ""} — this takes a while...`,
+        }],
+        details: {},
+      });
+
+      const timeout = imageToolTimeoutMs(model, size);
+      const result = imageInput
+        ? await fetchImageEdit(cfg.baseUrl, apiKey, { model, prompt: params.prompt, image: imageInput }, timeout)
+        : await fetchImageGeneration(cfg.baseUrl, apiKey, { prompt: params.prompt, model, size }, timeout);
+
+      const data = result.images[0];
+      let filePath: string | undefined;
+      try {
+        filePath = await saveImageB64(data, deps.imageSaveDir ?? (await import("node:os")).tmpdir());
+      } catch {
+        // best-effort copy (R4-001); the image still renders
+      }
+      store.set({ data, mimeType: "image/png", filePath });
+      deps.sendMessage({
+        customType: "actsis-litellm:image",
+        content: [
+          { type: "text", text: `generate_image "${params.prompt}" — ${model} ${size}` },
+          { type: "image", data, mimeType: "image/png" },
+        ] satisfies Array<TextContent | ImageContent>,
+        display: true,
+        details: { filePath },
+      });
+
+      return {
+        content: [{
+          type: "text",
+          text: `Image ready: ${model} ${size}` + (filePath ? ` (saved: ${filePath})` : "")
+            + `. The image is rendered in the conversation. Reference it as image="last" for edits.`,
+        }],
+        details: { model, size, filePath },
+      };
+    },
+  };
+}

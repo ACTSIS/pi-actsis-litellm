@@ -1,5 +1,22 @@
 # Changelog
 
+## Sin publicar — 2026-10-29 — issues #47 (v2: agente con tool de imagen)
+
+- Añadido: **tool `actsis-litellm:generate_image`** (modelo-callable) para
+  pedir imágenes NATURALMENTE en el chat: el agente la llama con
+  `prompt`/`size`/`model`/`image`. La lista de modelos disponibles se
+  **descubre** del gateway (`/v1/models`, mode=image_generation) y la
+  description de la tool se refresca (throttle 5 min, re-registro en
+  `before_agent_start`) — nunca hardcodeada. Selección (S2): param explícito
+  > heurística (imagen de entrada → modelo de edición) > default sdxl.
+- Añadido: **edición por instrucción** desde el chat: el parámetro `image`
+  acepta `"last"` (última imagen generada en la sesión, store) o un path
+  (png/jpg/webp) → multipart `POST /v1/images/edits` (qwen-image-edit, 2511).
+- Añadido: timeouts adaptativos por modelo/tamaño (Qwen 512=300 s,
+  Qwen 1024=600 s, resto 180 s) + progreso vía onUpdate.
+- Añadido: render con el mismo mensaje custom de /image + store de sesión
+  para ediciones encadenadas.
+
 ## Sin publicar — 2026-10-29 — issues #48 y #47
 
 - Añadido: **`/actsis-litellm:image`** — generación de pixel-art vía
