@@ -310,6 +310,14 @@ describe("toolDescription", () => {
     assert.match(desc, /ask the user/);
   });
 
+  it("states that Edit-named models also generate from scratch (regression: local agent misread it as edit-only)", () => {
+    const desc = toolDescription(["sdxl-pixel-art", "qwen-image-edit"]);
+    assert.match(desc, /FROM SCRATCH/);
+    assert.match(desc, /does NOT restrict it to editing/);
+    assert.match(desc, /BAKED IN/);        // sdxl style is fixed
+    assert.match(desc, /3D\/realistic/); // style-driven routing guidance
+  });
+
   it("falls back to discover-at-call-time wording when the list is empty", () => {
     assert.match(toolDescription([]), /discover at call time/);
   });

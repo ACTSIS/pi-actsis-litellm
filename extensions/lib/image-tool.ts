@@ -242,16 +242,29 @@ export function toolDescription(models: string[]): string {
     ? models.map((m) => `- ${m}`).join("\n")
     : "- (discover at call time — the gateway catalog defines the options)";
   return [
-    "Generate or edit an image through the ACTSIS gateway (stable-diffusion.cpp",
-    "models on the Strix Halo workstation). Use this tool when the user asks",
-    "for an image in natural language, or to edit an existing image.",
-    "Available image models (ask the user which one they want when it is not",
-    "obvious; edits always need a reference image):",
+    "Generate an image through the ACTSIS gateway (stable-diffusion.cpp models",
+    "on the Strix Halo workstation). Use this tool when the user asks for an",
+    "image in natural language, or to edit an existing image.",
+    "EVERY model here accepts BOTH use cases unless its own description below",
+    "says otherwise: text-to-image generation FROM SCRATCH (no image param)",
+    "AND instruction-based editing (with the image param). A model id with",
+    "'Edit' in the name does NOT restrict it to editing.",
+    "Known capabilities:",
+    "- sdxl-pixel-art: text-to-image AND image inputs; style is BAKED IN",
+    "  (always pixel-art, the prompt's style keywords don't change it) — use",
+    "  it when the user wants pixel-art, or a fast/cheap render.",
+    "- qwen-image-edit: text-to-image (free style — realistic, 3D, flat,",
+    "  anything the prompt asks) AND instruction editing of a reference image;",
+    "  slower and heavier (512 ~1 min, 1024 ~5.5 min per image).",
+    "Style requests like 3D/realistic MUST go to a prompt-driven model",
+    "(qwen-image-edit), never to sdxl-pixel-art.",
+    "Discovered image models (ask the user which one they want when it is not",
+    "obvious; edits need a reference image):",
     options,
     "Selection rules: an explicit `model` param wins; with an `image` input",
     "default to the editing-capable model (qwen-image-edit); otherwise the",
     "gateway default (sdxl-pixel-art). Report the rendered result and mention",
-    "that large sizes are slower (qwen 1024 ~5 min).",
+    "that large sizes are slower.",
   ].join("\n");
 }
 
