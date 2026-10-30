@@ -84,3 +84,22 @@ L3 (2026-10-30, parent): runtime facts that shape the design — `pi.sendMessage
    `execute` returns, so post-return progress must use `ctx.ui.setStatus`;
    `ToolDefinition.executionMode: "parallel"` only allows concurrent tool
    calls, the turn still waits. Issue #61, branch `feat/61-image-background-jobs`.
+L4 (2026-10-30, parent): T1-T6 implemented by a delegated writer (`gentle-ai-worker`)
+   on this branch. Parent verification against S1-S11 by reading the code, not the
+   writer's report: per-job AbortController is the one passed to the fetcher while
+   the tool-call `signal` stays on the blocking path; success delivery sends the
+   custom message with no `triggerTurn` (index.ts calls `pi.sendMessage(message)`
+   without options) and updates the store only after the render succeeds; the
+   failure path emits a visible message plus `notify(..., "error")`; the status
+   interval is cleared in `finally`; `session_shutdown` no-ops when nothing is
+   active and its text names the gateway GPU; the cap message names the running
+   ids. Suite 403/403 and typecheck green on the merged tree.
+   Slice boundary (recorded per the work-unit rule): the implementation landed as
+   ONE commit of ~914 authored lines across 12 files, over the ~400-line slice
+   guidance on purpose — the compile unit is coupled (`index.ts` imports the new
+   command handlers from `commands.ts`, and the detached runner is invoked from
+   the tool), so splitting it would have produced commits that do not typecheck.
+   Review workload is disclosed in the PR instead.
+   Known verification gap (declared, not covered): the `session_shutdown` handler
+   itself has no automated test because it is registered inline in `index.ts`;
+   the underlying `cancelAll()` idempotency is covered by `test/image-jobs.test.ts`.
