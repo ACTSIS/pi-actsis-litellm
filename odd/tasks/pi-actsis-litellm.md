@@ -175,6 +175,22 @@ Approved decisions (user, 2026-09-22):
       off clears rows and skips refreshes; on refreshes immediately.
 ## Evidence log
 
+- 2026-10-30 (issue #59, startup baseUrl): owner report on a Windows/PowerShell
+  machine: `Error: Extension ...\extensions\index.ts error: Provider
+  actsis-litellm: "baseUrl" is required when defining custom models.` Reproduced
+  locally against pi's own `validateExtensionProvider`: (1) `buildProviderConfig(null)`
+  returned `baseUrl: ""` with non-empty `models` from the models cache, and pi
+  rejects that registration, killing the whole extension load so `/login` is
+  unreachable; (2) `resolveConfig` built the user-config path from `env.HOME`,
+  which is undefined in PowerShell, so it probed `/.pi/agent/actsis-litellm.json`
+  instead of the profile (auth.json and the model cache already used
+  `os.homedir()`). Fix: S1 registers the /login placeholder with `models: []`
+  when no URL is known and republishes the cached catalog as soon as there is
+  one; S2 resolves the home directory as `homeDir` (tests) > `HOME` >
+  `os.homedir()`. 4 new tests (RED first: ConfigError + AssertionError), suite
+  383/383, typecheck clean; end-to-end check: temp HOME with the cache, no
+  config, no env -> extension loads and `/login` is reachable.
+
 - 2026-10-09 (T28/T29 delivery): Issue #19 + PR #20 (type:bug) merged rebase
   @ c03385b; NBSP column padding survives the shell sanitizer (contract tests
   vs sanitizeStatus), /actsis-litellm:top toggle persisted in
