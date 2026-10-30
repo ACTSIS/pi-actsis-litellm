@@ -1,5 +1,18 @@
 # Changelog
 
+## Sin publicar — 2026-10-30 — issue #59 (arranque sin URL de gateway / Windows)
+
+- Corregido: la extensión ya no aborta el arranque con `Provider actsis-litellm:
+  "baseUrl" is required when defining custom models.` cuando hay catálogo de
+  modelos cacheado y no hay URL de gateway resoluble. El placeholder que habilita
+  `/login` registra `models: []` (S1) y el catálogo cacheado vuelve a publicarse
+  en cuanto hay URL.
+- Corregido: la ruta del config de usuario (`~/.pi/agent/actsis-litellm.json`) se
+  resuelve con `os.homedir()`, igual que `auth.json` y el cache de modelos, en vez
+  de `env.HOME`. En Windows/PowerShell `HOME` no existe y la búsqueda apuntaba a
+  `/.pi/agent/actsis-litellm.json` (S2). El orden de precedencia se mantiene:
+  `homeDir` inyectado > `HOME` > `os.homedir()`.
+
 ## Sin publicar — 2026-10-29 — issues #47 (v2: agente con tool de imagen)
 
 - Añadido: **tool `actsis-litellm:generate_image`** (modelo-callable) para

@@ -218,7 +218,12 @@ export async function buildProviderConfig(
   const baseUrl = cfg?.baseUrl ?? "";
 
   const cached = await loadCache(CACHE_PATH);
-  const initialModels = cached ?? [];
+  // pi rejects registerProvider with "baseUrl" is required when defining custom
+  // models." whenever models are non-empty and no baseUrl is known. Without a
+  // gateway URL the catalog is unusable anyway, so the /login placeholder must
+  // register with no models instead of aborting the whole extension load
+  // (issue #59 S1). The cached catalog returns as soon as a URL exists.
+  const initialModels = baseUrl ? (cached ?? []) : [];
 
   const oauth = {
     name: "Actsis LiteLLM (OAuth)",

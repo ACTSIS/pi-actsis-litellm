@@ -1,4 +1,6 @@
 import { ConfigError } from "./errors.ts";
+import os from "node:os";
+import path from "node:path";
 
 export interface ActsisEnabledConfig {
   baseUrl: string;
@@ -65,6 +67,22 @@ export interface ConfigResolutionDeps {
   fileLoader: (path: string) => Promise<ConfigFileShape | null>;
   prompt: () => Promise<string | null | undefined>;
   storedUrl?: string | null;
+  /** Explicit home directory; tests inject it. Defaults to HOME, then os.homedir(). */
+  homeDir?: string;
+}
+
+/**
+ * Root of the per-user config files. Must agree with auth.json and the model
+ * cache, which are both read from os.homedir(): on Windows (PowerShell) HOME is
+ * undefined, so a HOME-only path silently pointed at "/.pi/..." instead of the
+ * user profile (issue #59 S2).
+ */
+function resolveHomeDir(deps: ConfigResolutionDeps): string {
+  const injected = deps.homeDir?.trim();
+  if (injected) return injected;
+  const envHome = deps.env.HOME?.trim();
+  if (envHome) return envHome;
+  return os.homedir();
 }
 
 export async function resolveConfig(
@@ -72,7 +90,7 @@ export async function resolveConfig(
 ): Promise<ActsisEnabledConfig> {
   const envUrl = deps.env.ACTSIS_LITELLM_URL?.trim();
   const filePaths = [
-    `${deps.env.HOME ?? ""}/.pi/agent/actsis-litellm.json`,
+    path.join(resolveHomeDir(deps), ".pi", "agent", "actsis-litellm.json"),
     `./.pi/actsis-litellm.user.json`,
   ];
 
