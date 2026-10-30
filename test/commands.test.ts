@@ -9,8 +9,10 @@ import {
   buildStatusHandler,
   buildModelsCommandHandler,
   buildLogoutHandler,
+  buildCancelImageHandler,
   type CommandDeps,
 } from "../extensions/lib/commands.ts";
+import { ImageJobRegistry } from "../extensions/lib/image-jobs.ts";
 
 type MutableMockRegistry = Record<string, unknown>;
 
@@ -116,6 +118,7 @@ describe("commands", () => {
       authPath: path.join(tmpDir, `auth-${Date.now()}.json`),
       prefsPath: path.join(tmpDir, `prefs-${Date.now()}.json`),
       requestTimeoutMs: 30_000,
+      imageJobRegistry: new ImageJobRegistry(),
     };
   });
 
@@ -346,6 +349,68 @@ describe("commands", () => {
       assert.equal(notifications.length, 1);
       assert.equal(notifications[0].level, "info");
       assert.ok(notifications[0].message.includes("Logged out"));
+    });
+  });
+
+  describe("actsis-litellm:cancel-image (T5)", () => {
+    it("cancels all active jobs and reports them", async () => {
+      const registry = deps.imageJobRegistry!;
+      const j1 = registry.create("sdxl-pixel-art", "512x512");
+      registry.start(j1.id);
+      const j2 = registry.create("sdxl-pixel-art", "768x768");
+      registry.start(j2.id);
+      const ctx = makeMockCtx();
+      await buildCancelImageHandler(deps)("all", ctx);
+      const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
+      assert.equal(notifications.length, 1);
+      assert.equal(notifications[0].level, "info");
+      assert.match(notifications[0].message, /Aborted image renders/);
+      assert.match(notifications[0].message, new RegExp(j1.id));
+      assert.match(notifications[0].message, new RegExp(j2.id));
+      assert.match(notifications[0].message, /may keep running on the gateway GPU/);
+      assert.equal(j1.controller.signal.aborted, true);
+      assert.equal(j2.controller.signal.aborted, true);
+    });
+
+    it("reports no jobs when cancel-all has nothing to abort", async () => {
+      const ctx = makeMockCtx();
+      await buildCancelImageHandler(deps)("all", ctx);
+      const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
+      assert.equal(notifications.length, 1);
+      assert.equal(notifications[0].level, "info");
+      assert.match(notifications[0].message, /No image renders in flight/);
+    });
+
+    it("cancels a specific job id and reports it", async () => {
+      const registry = deps.imageJobRegistry!;
+      const job = registry.create("sdxl-pixel-art", "512x512");
+      registry.start(job.id);
+      const ctx = makeMockCtx();
+      await buildCancelImageHandler(deps)(job.id, ctx);
+      const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
+      assert.equal(notifications.length, 1);
+      assert.equal(notifications[0].level, "info");
+      assert.match(notifications[0].message, new RegExp(job.id));
+      assert.match(notifications[0].message, /may keep running on the gateway GPU/);
+      assert.equal(job.controller.signal.aborted, true);
+    });
+
+    it("warns when the requested job id is not active", async () => {
+      const ctx = makeMockCtx();
+      await buildCancelImageHandler(deps)("img-99", ctx);
+      const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
+      assert.equal(notifications.length, 1);
+      assert.equal(notifications[0].level, "warning");
+      assert.match(notifications[0].message, /No active image render/);
+    });
+
+    it("warns when called without an argument", async () => {
+      const ctx = makeMockCtx();
+      await buildCancelImageHandler(deps)("", ctx);
+      const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
+      assert.equal(notifications.length, 1);
+      assert.equal(notifications[0].level, "warning");
+      assert.match(notifications[0].message, /Usage/);
     });
   });
 });

@@ -28,18 +28,21 @@ export interface ParsedImageArgs {
   prompt: string;
   size: string;
   model: string;
+  background: boolean;
 }
 
-/** Parse `/image` args: an optional `--size 512|768|1024` flag and the prompt. */
+/** Parse `/image` args: an optional `--size 512|768|1024` flag, an optional
+ *  `--background` flag, and the prompt. */
 export function parseImageArgs(args: string): ParsedImageArgs {
   const words = args.trim().split(/\s+/).filter((w) => w.length > 0);
   if (words.length === 0 || words.every((w) => w === "--")) {
     throw new CommandError(
-      "Usage: /image <prompt> [--size 512|768|1024]",
+      "Usage: /image <prompt> [--size 512|768|1024] [--background]",
     );
   }
 
   let size = "512";
+  let background = false;
   const promptWords: string[] = [];
   for (let i = 0; i < words.length; i++) {
     if (words[i] === "--size") {
@@ -53,16 +56,20 @@ export function parseImageArgs(args: string): ParsedImageArgs {
       i++;
       continue;
     }
+    if (words[i] === "--background") {
+      background = true;
+      continue;
+    }
     promptWords.push(words[i]);
   }
 
   const prompt = promptWords.join(" ").trim();
   if (!prompt) {
     throw new CommandError(
-      "Usage: /image <prompt> [--size 512|768|1024]",
+      "Usage: /image <prompt> [--size 512|768|1024] [--background]",
     );
   }
-  return { prompt, size: IMAGE_SIZE_MAP.get(size) ?? "512x512", model: IMAGE_DEFAULT_MODEL };
+  return { prompt, size: IMAGE_SIZE_MAP.get(size) ?? "512x512", model: IMAGE_DEFAULT_MODEL, background };
 }
 
 export interface ImageGenerationOptions {
@@ -82,8 +89,11 @@ export async function fetchImageGeneration(
   apiKey: string,
   options: ImageGenerationOptions,
   timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<ImageGenerationResult> {
   const normalized = baseUrl.replace(/\/+$/, "");
+  const timeoutSignal = AbortSignal.timeout(imageTimeoutMs(timeoutMs));
+  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   const response = await fetchOrThrow(
     `${normalized}/v1/images/generations`,
     {
@@ -99,7 +109,7 @@ export async function fetchImageGeneration(
         size: options.size,
         output_format: IMAGE_OUTPUT_FORMAT,
       }),
-      signal: AbortSignal.timeout(imageTimeoutMs(timeoutMs)),
+      signal: combinedSignal,
     },
     (message, cause) => new ImageError(message, { cause }),
     "Failed to reach gateway images endpoint",

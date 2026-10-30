@@ -1,5 +1,29 @@
 # Changelog
 
+## Sin publicar — 2026-10-30 — issue #61 (renders de imagen en background)
+
+- Añadido: **renders de imagen detachados** — `generate_image` acepta
+  `background: true` y `/actsis-litellm:image` acepta `--background`. La llamada
+  devuelve un id de job al instante y la imagen terminada llega después como
+  mensaje propio, sin bloquear el turno del chat ni gatillar un turno nuevo. El
+  camino bloqueante sigue siendo el default: cuando el modelo necesita el
+  resultado para decidir el siguiente paso, esperar es correcto.
+- Añadido: el store de sesión (`image="last"`) se actualiza recién cuando el
+  render termina; una edición que necesite `"last"` mientras hay un render en
+  vuelo falla nombrando el job pendiente.
+- Añadido: `/actsis-litellm:cancel-image <id|all>` y `AbortController` propio por
+  job (el signal del tool pertenece al turno y no sobrevive al retorno).
+- Añadido: estado en la línea de status mientras hay renders en vuelo
+  (`job: modelo tamaño (Ns)`), limpiado al terminar el último; tope de 2 renders
+  concurrentes porque el gateway renderiza en una sola GPU.
+- Añadido: `session_shutdown` aborta los jobs en vuelo de forma idempotente y
+  avisa que el render puede seguir corriendo en la GPU del gateway. Una falla se
+  reporta como mensaje visible en el transcript más notificación.
+- Endurecido (hallazgos F1/F2 de la verificación independiente): la entrega y el
+  estado en la UI son best-effort — un `ctx` obsoleto ya no puede filtrar un slot
+  del tope de concurrencia ni convertir un tick del timer en una excepción no
+  capturada.
+
 ## Sin publicar — 2026-10-30 — issue #59 (arranque sin URL de gateway / Windows)
 
 - Corregido: la extensión ya no aborta el arranque con `Provider actsis-litellm:

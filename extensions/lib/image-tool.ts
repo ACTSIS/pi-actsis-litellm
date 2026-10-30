@@ -1,6 +1,7 @@
 import { fetchOrThrow } from "./client.ts";
 import { AuthError, CommandError, ImageError } from "./errors.ts";
-import { fetchImageGeneration, saveImageB64, IMAGE_DEFAULT_MODEL } from "./image.ts";
+import { fetchImageGeneration, saveImageB64, IMAGE_DEFAULT_MODEL, IMAGE_CUSTOM_TYPE } from "./image.ts";
+import { ImageJobRegistry, IMAGE_JOB_STATUS_KEY, type ImageJob } from "./image-jobs.ts";
 import type { AgentToolUpdateCallback, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
@@ -211,6 +212,7 @@ export async function fetchImageEdit(
   apiKey: string,
   options: { model: string; prompt: string; image: SessionImage; size?: string },
   timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<ImageGenerationResultShape> {
   const normalized = baseUrl.replace(/\/+$/, "");
   const size = options.size ?? "512x512";
@@ -230,6 +232,8 @@ export async function fetchImageEdit(
   );
   const budgetMs = timeoutMs ?? 180_000;
   const startedAt = Date.now();
+  const timeoutSignal = AbortSignal.timeout(budgetMs);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   let response: Response;
   try {
     response = await fetchOrThrow(
@@ -238,7 +242,7 @@ export async function fetchImageEdit(
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },
         body: form,
-        signal: AbortSignal.timeout(budgetMs),
+        signal: combinedSignal,
       },
       (message, cause) => new ImageError(message, { cause }),
       "Failed to reach gateway images edits endpoint",
@@ -335,6 +339,10 @@ export interface GenerateImageToolDeps {
   sendMessage: (message: unknown) => void;
   imageSaveDir?: string;
   store?: ImageSessionStore;
+  /** Shared detached-image job registry (T1/T2). */
+  registry: ImageJobRegistry;
+  /** Override heartbeat cadence for tests (S3). */
+  heartbeatCadenceMs?: number;
   /** Discovered image model ids for the tool description (S2 — never
    *  hardcoded; empty list falls back to a discover-at-call-time text). */
   descriptionModels?: string[];
@@ -352,7 +360,129 @@ const toolParams = () =>
     size: Type.Optional(Type.String({ description: "512 (default), 768 or 1024 — rendered as WIDTHxHEIGHT" })),
     model: Type.Optional(Type.String({ description: "Image model id from this description's list (e.g. sdxl-pixel-art, qwen-image-edit)" })),
     image: Type.Optional(Type.String({ description: "Optional image input for edits: 'last' for the last generated image in this session, or a file path (png/jpg/webp)" })),
+    background: Type.Optional(Type.Boolean({ description: "Run the render in the background and return a job id immediately" })),
   });
+
+interface DetachedRenderCtx {
+  ui?: {
+    setStatus?(key: string, text: string | undefined): void;
+    notify?(message: string, level?: string): void;
+  };
+}
+
+interface DetachedRenderOptions {
+  sendMessage: (message: {
+    customType: string;
+    content: Array<TextContent | ImageContent> | string;
+    display: boolean;
+    details?: { filePath?: string };
+  }) => void;
+  notify?: (message: string, level?: "error" | "info" | "warning") => void;
+  setStatus?: (key: string, text: string | undefined) => void;
+  store?: ImageSessionStore;
+  imageSaveDir?: string;
+  registry: ImageJobRegistry;
+}
+
+/** Run an image job detached from the active turn (T4/T6). */
+export async function runDetachedImageJob(
+  job: ImageJob,
+  options: DetachedRenderOptions,
+  prompt: string,
+  fetcher: () => Promise<{ images: string[]; model: string; size?: string }>,
+): Promise<void> {
+  const { registry, sendMessage, notify, setStatus, store, imageSaveDir } = options;
+
+  function refreshStatus(): void {
+    // Best-effort: a stale or torn-down UI must never turn a timer tick into an
+    // uncaughtException (review finding F2).
+    try {
+      const running = registry.running();
+      if (running.length === 0) {
+        setStatus?.(IMAGE_JOB_STATUS_KEY, undefined);
+        return;
+      }
+      const lines = running.map((j) => {
+        const elapsed = Math.floor((Date.now() - j.startedAt) / 1000);
+        return `${j.id}: ${j.model} ${j.size} (${elapsed}s)`;
+      });
+      setStatus?.(IMAGE_JOB_STATUS_KEY, lines.join(" · "));
+    } catch {
+      // Status is informative only; never let it break the render.
+    }
+  }
+
+  // Delivery is best-effort too: pi throws synchronously from sendMessage when
+  // the extension ctx is stale (assertActive). That throw must never skip the
+  // slot release below, or the concurrency cap leaks permanently (finding F1).
+  const deliver = (message: Parameters<typeof sendMessage>[0]): void => {
+    try {
+      sendMessage(message);
+    } catch {
+      // The transcript entry is lost; the slot release below still runs.
+    }
+  };
+  const notifySafely = (message: string, level: "error"): void => {
+    try {
+      notify?.(message, level);
+    } catch {
+      // Notification is informative only.
+    }
+  };
+
+  const statusInterval = setInterval(refreshStatus, 1_000);
+  let outcome: "done" | "failed" = "failed";
+
+  try {
+    registry.start(job.id);
+    refreshStatus();
+    const result = await fetcher();
+    const data = result.images[0];
+    let filePath: string | undefined;
+    try {
+      filePath = await saveImageB64(data, imageSaveDir ?? (await import("node:os")).tmpdir());
+    } catch {
+      // best-effort copy (R4-001); the image still renders
+    }
+    store?.set({ data, mimeType: "image/png", filePath });
+    outcome = "done";
+    deliver({
+      customType: IMAGE_CUSTOM_TYPE,
+      content: [
+        { type: "text", text: `${job.id}: generate_image "${prompt}" — ${result.model} ${result.size}` },
+        { type: "image", data, mimeType: "image/png" },
+      ],
+      display: true,
+      details: { filePath },
+    });
+  } catch (err) {
+    const current = registry.get(job.id);
+    if (current?.status === "cancelled") {
+      // Cancellation was already reported by /cancel-image; just release the slot.
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      deliver({
+        customType: IMAGE_CUSTOM_TYPE,
+        content: [{ type: "text", text: `${job.id} failed: ${message}` }],
+        display: true,
+      });
+      notifySafely(`${job.id} failed: ${message}`, "error");
+    }
+  } finally {
+    clearInterval(statusInterval);
+    // Release the slot unconditionally (finding F1): the cap must never depend on
+    // a delivery succeeding. A job cancelled meanwhile keeps its own status and
+    // is dropped instead of being resurrected as done/failed.
+    const current = registry.get(job.id);
+    if (current?.status === "cancelled") {
+      registry.remove(job.id);
+    } else if (current && (current.status === "queued" || current.status === "running")) {
+      registry.settle(job.id, outcome);
+      if (outcome === "failed") registry.remove(job.id);
+    }
+    refreshStatus();
+  }
+}
 
 /**
  * Built tool registration object for pi.registerTool (T3). execute() returns
@@ -361,6 +491,7 @@ const toolParams = () =>
  */
 export function buildGenerateImageTool(deps: GenerateImageToolDeps) {
   const store = deps.store ?? new ImageSessionStore();
+  const registry = deps.registry;
   return {
     name: IMAGE_TOOL_NAME,
     label: "Generate image (ACTSIS gateway)",
@@ -379,6 +510,17 @@ export function buildGenerateImageTool(deps: GenerateImageToolDeps) {
       if (!cfg) throw new CommandError("Gateway not configured. Run /login first.");
       const apiKey = await deps.getUsableApiKey(providerId, _ctx);
       if (!apiKey) throw new CommandError("No usable credential. Run /login first.");
+
+      const ctx = _ctx as DetachedRenderCtx;
+
+      if (params.image === "last" || params.image === "última" || params.image === "last_image") {
+        const pending = registry.running()[0];
+        if (pending) {
+          throw new CommandError(
+            `An image render is still in flight as ${pending.id}. Wait for it to finish before referencing image="last".`,
+          );
+        }
+      }
 
       const imageInput = params.image
         ? await resolveImageInput(params.image, store)
@@ -405,13 +547,45 @@ export function buildGenerateImageTool(deps: GenerateImageToolDeps) {
       });
 
       const timeout = imageToolTimeoutMs(model, size);
+
+      if (params.background) {
+        const job = registry.create(model, size);
+        const fetcher = imageInput
+          ? () => fetchImageEdit(cfg.baseUrl, apiKey, { model, prompt: params.prompt, image: imageInput, size }, timeout, job.controller.signal)
+          : () => fetchImageGeneration(cfg.baseUrl, apiKey, { prompt: params.prompt, model, size }, timeout, job.controller.signal);
+
+        runDetachedImageJob(
+          job,
+          {
+            sendMessage: deps.sendMessage as DetachedRenderOptions["sendMessage"],
+            notify: ctx.ui?.notify as DetachedRenderOptions["notify"],
+            setStatus: ctx.ui?.setStatus,
+            store,
+            imageSaveDir: deps.imageSaveDir,
+            registry,
+          },
+          params.prompt,
+          fetcher,
+        ).catch(() => {
+          // Errors are delivered through sendMessage/ui.notify inside the runner.
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: `Image render queued as ${job.id} (${model} ${size}). The image will appear in the conversation by itself when it is ready. Do not call generate_image again for the same prompt.`,
+          }],
+          details: { jobId: job.id, model, size, background: true },
+        };
+      }
+
       const startedAt = Date.now();
       const result = await withHeartbeat(
         imageInput
-          ? fetchImageEdit(cfg.baseUrl, apiKey, { model, prompt: params.prompt, image: imageInput, size }, timeout)
-          : fetchImageGeneration(cfg.baseUrl, apiKey, { prompt: params.prompt, model, size }, timeout),
+          ? fetchImageEdit(cfg.baseUrl, apiKey, { model, prompt: params.prompt, image: imageInput, size }, timeout, signal)
+          : fetchImageGeneration(cfg.baseUrl, apiKey, { prompt: params.prompt, model, size }, timeout, signal),
         onUpdate,
-        IMAGE_HEARTBEAT_CADENCE_MS,
+        deps.heartbeatCadenceMs ?? IMAGE_HEARTBEAT_CADENCE_MS,
         startedAt,
       );
 
@@ -424,7 +598,7 @@ export function buildGenerateImageTool(deps: GenerateImageToolDeps) {
       }
       store.set({ data, mimeType: "image/png", filePath });
       deps.sendMessage({
-        customType: "actsis-litellm:image",
+        customType: IMAGE_CUSTOM_TYPE,
         content: [
           { type: "text", text: `generate_image "${params.prompt}" — ${model} ${size}` },
           { type: "image", data, mimeType: "image/png" },

@@ -19,6 +19,7 @@ import {
   buildUsageHandler,
   buildUsageSubsHandler,
   buildImageCommandHandler,
+  buildCancelImageHandler,
   defaultCommandDeps,
   extractUsableApiKey,
   buildTopHandler,
@@ -31,6 +32,7 @@ import {
   discoverImageModels,
   ImageSessionStore,
 } from "./lib/image-tool.ts";
+import { ImageJobRegistry } from "./lib/image-jobs.ts";
 import { normalizeOverflowError } from "./lib/overflow.ts";
 import {
   normalizeLimitError,
@@ -398,6 +400,13 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   // Register commands first; they work independently of provider registration.
   const commandDeps = defaultCommandDeps();
   commandDeps.getState = () => state;
+
+  // Shared job registry and image store for the tool and /image commands.
+  const imageJobRegistry = new ImageJobRegistry();
+  const imageStore = new ImageSessionStore();
+  commandDeps.imageJobRegistry = imageJobRegistry;
+  commandDeps.imageStore = imageStore;
+
   // /image renders its result as a displayed custom message (issue #47 S2);
   // the pipeline is UI-owned so the handler stays testable without pi.
   commandDeps.sendMessage = (message) => {
@@ -408,13 +417,13 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   // Model-callable image tool (issue #47 v2; specs in odd/tasks/agent-image-tool.md)
   // — natural image generation/editing from chat. The tool description is
   // refreshed (S2) with the gateway's DISCOVERED image models, never hardcoded.
-  const imageStore = new ImageSessionStore();
   const imageToolDeps = {
     getProviderId: () => getProviderId(commandDeps),
     authPath: commandDeps.authPath,
     requestTimeoutMs: commandDeps.requestTimeoutMs,
     imageSaveDir: commandDeps.imageSaveDir,
     store: imageStore,
+    registry: imageJobRegistry,
     sendMessage: (message: unknown) => {
       pi.sendMessage(message as Parameters<typeof pi.sendMessage>[0]);
     },
@@ -478,8 +487,13 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("actsis-litellm:image", {
     description:
-      "Generate a pixel-art image (sdxl-pixel-art) and render it in the session; usage: /image <prompt> [--size 512|768|1024]",
+      "Generate a pixel-art image (sdxl-pixel-art) and render it in the session; usage: /image <prompt> [--size 512|768|1024] [--background]",
     handler: buildImageCommandHandler(commandDeps),
+  });
+
+  pi.registerCommand("actsis-litellm:cancel-image", {
+    description: "Cancel a background image render by id, or all",
+    handler: buildCancelImageHandler(commandDeps),
   });
 
   pi.registerCommand("actsis-litellm:logout", {
@@ -558,6 +572,18 @@ export default async function actsisLiteLLMExtension(pi: ExtensionAPI) {
   pi.on("agent_end", async (_event, ctx) => {
     await refreshBudgetWidget(ctx as unknown as WidgetContext);
     await refreshTopModelsWidget(ctx as unknown as WidgetContext);
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    const active = imageJobRegistry.active();
+    if (active.length === 0) return;
+    const ids = imageJobRegistry.cancelAll();
+    if (ctx.hasUI) {
+      ctx.ui.notify(
+        `Aborted ${ids.length} image render(s) (${ids.join(", ")}). The render may keep running on the gateway GPU.`,
+        "info",
+      );
+    }
   });
 
   async function registerWithConfig(providerId: string): Promise<void> {

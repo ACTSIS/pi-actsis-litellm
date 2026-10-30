@@ -16,6 +16,7 @@ import {
   IMAGE_TOOL_NAME,
   withHeartbeat,
 } from "../extensions/lib/image-tool.ts";
+import { ImageJobRegistry, IMAGE_JOB_STATUS_KEY } from "../extensions/lib/image-jobs.ts";
 import { CommandError, ImageError } from "../extensions/lib/errors.ts";
 
 const PNG_B64 = Buffer.from("fake-png").toString("base64");
@@ -342,17 +343,19 @@ describe("buildGenerateImageTool.execute", () => {
 
   function makeTool(overrides?: Partial<Parameters<typeof buildGenerateImageTool>[0]>) {
     const store = new ImageSessionStore();
+    const registry = new ImageJobRegistry();
     const sent: unknown[] = [];
     const tool = buildGenerateImageTool({
       getProviderId: () => "actsis-litellm",
       authPath: "/nonexistent/auth.json",
       store,
+      registry,
       sendMessage: (message) => sent.push(message),
       resolveStatusConfig: async () => ({ baseUrl: BASE_URL }),
       getUsableApiKey: async () => "key-123",
       ...overrides,
     }) as unknown as ToolShape & { description: string };
-    return { tool, store, sent };
+    return { tool, store, registry, sent };
   }
 
   function stubCatalogFetch(modelId: string): void {
@@ -455,5 +458,286 @@ describe("toolDescription", () => {
   it("keeps a model-safe tool name (no colon: ChatGPT/Claude reject it in history)", () => {
     assert.equal(IMAGE_TOOL_NAME, "actsis-litellm_generate_image");
     assert.match(IMAGE_TOOL_NAME, /^[a-zA-Z0-9_-]+$/);
+  });
+});
+
+describe("buildGenerateImageTool.execute background mode (T2/T4/T6)", () => {
+  type ToolShape = ReturnType<typeof buildGenerateImageTool> & {
+    execute: (
+      id: string,
+      params: { prompt: string; size?: string; model?: string; image?: string; background?: boolean },
+      signal: AbortSignal | undefined,
+      onUpdate: ((u: { content: Array<{ type: string; text?: string }> }) => void) | undefined,
+      ctx: unknown,
+    ) => Promise<{ content: Array<{ type: string; text?: string }>; details: Record<string, unknown> }>;
+  };
+
+  function makeCtx(overrides: Record<string, unknown> = {}) {
+    const status: Record<string, string | undefined> = {};
+    const notifications: Array<{ message: string; level?: string }> = [];
+    return {
+      ctx: {
+        ui: {
+          setStatus: (key: string, text: string | undefined) => {
+            status[key] = text;
+          },
+          notify: (message: string, level?: string) => notifications.push({ message, level }),
+        },
+        modelRegistry: {},
+        ...overrides,
+      },
+      status,
+      notifications,
+    };
+  }
+
+  function makeTool(overrides?: Partial<Parameters<typeof buildGenerateImageTool>[0]>) {
+    const store = new ImageSessionStore();
+    const registry = new ImageJobRegistry();
+    const sent: unknown[] = [];
+    const tool = buildGenerateImageTool({
+      getProviderId: () => "actsis-litellm",
+      authPath: "/nonexistent/auth.json",
+      store,
+      registry,
+      sendMessage: (message) => sent.push(message),
+      resolveStatusConfig: async () => ({ baseUrl: BASE_URL }),
+      getUsableApiKey: async () => "key-123",
+      ...overrides,
+    }) as unknown as ToolShape & { description: string };
+    return { tool, store, registry, sent };
+  }
+
+  function stubCatalogFetch(modelId: string): void {
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes("/v1/models")) {
+        return new Response(JSON.stringify({
+          data: [
+            { id: modelId, mode: "image_generation" },
+            { id: "other", mode: "chat" },
+          ],
+        }), { status: 200, headers: { "content-type": "application/json" } }) as Response;
+      }
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }) as Response;
+    }) as unknown as typeof globalThis.fetch;
+  }
+
+  it("background=true returns immediately with a job id while the render is still in flight", async () => {
+    const { tool, registry, sent } = makeTool();
+    stubCatalogFetch("sdxl-pixel-art");
+    let generationResolved = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes("/v1/images/generations")) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        generationResolved = true;
+      }
+      return (originalFetch as (u: unknown, i?: RequestInit) => Promise<Response>)(url, init);
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      const { ctx, status } = makeCtx();
+      const res = await tool.execute("bg1", { prompt: "a dragon", background: true }, undefined, undefined, ctx);
+      assert.equal(generationResolved, false, "render must still be in flight when execute returns");
+      assert.match(res.content[0].text ?? "", /queued/);
+      assert.match(res.content[0].text ?? "", /img-/);
+      assert.match(res.content[0].text ?? "", /will appear/);
+      assert.match(res.content[0].text ?? "", /Do not call/);
+      assert.equal(res.details.background, true);
+      const jobId = String(res.details.jobId);
+      assert.equal(registry.get(jobId)?.status, "running");
+      assert.ok(status[IMAGE_JOB_STATUS_KEY], "status should be set while job is in flight");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("success delivery updates the store only after completion (S5)", async () => {
+    const { tool, store, registry, sent } = makeTool();
+    stubCatalogFetch("sdxl-pixel-art");
+    let resolveGeneration: (() => void) | undefined;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes("/v1/images/generations")) {
+        await new Promise<void>((resolve) => {
+          resolveGeneration = resolve;
+        });
+      }
+      return (originalFetch as (u: unknown, i?: RequestInit) => Promise<Response>)(url, init);
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      const { ctx, status } = makeCtx();
+      const res = await tool.execute("bg2", { prompt: "a dragon", background: true }, undefined, undefined, ctx);
+      const jobId = String(res.details.jobId);
+      assert.equal(store.get(), null, "store must not be updated before completion");
+      resolveGeneration!();
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(store.get()?.data, PNG_B64, "store updated after completion");
+      const msg = sent.find((m) => (m as { customType?: string }).customType === "actsis-litellm:image");
+      assert.ok(msg, "custom image message sent after completion");
+      assert.equal((msg as { display?: boolean }).display, true);
+      assert.equal(registry.get(jobId)?.status, "done");
+      assert.equal(status[IMAGE_JOB_STATUS_KEY], undefined, "status cleared when last job settles");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("failure delivery is visible and releases the id (S6)", async () => {
+    const { tool, registry, sent } = makeTool();
+    stubCatalogFetch("sdxl-pixel-art");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes("/v1/images/generations")) {
+        return new Response(JSON.stringify({ error: { message: "gpu oom" } }), { status: 500 });
+      }
+      return (originalFetch as (u: unknown, i?: RequestInit) => Promise<Response>)(url, init);
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      const { ctx, notifications } = makeCtx();
+      const res = await tool.execute("bg3", { prompt: "a dragon", background: true }, undefined, undefined, ctx);
+      const jobId = String(res.details.jobId);
+      await new Promise((r) => setTimeout(r, 50));
+      const msg = sent.find((m) => (m as { customType?: string }).customType === "actsis-litellm:image");
+      assert.ok(msg, "failure delivered as visible custom message");
+      assert.equal((msg as { display?: boolean }).display, true);
+      assert.match(((msg as { content?: Array<{ type: string; text?: string }> }).content?.[0] as { text?: string })?.text ?? "", /failed/);
+      assert.ok(notifications.some((n) => n.level === "error"), "ui.notify called with error level");
+      assert.notEqual(registry.get(jobId)?.status, "running");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("background=false still awaits the render and still heartbeats (non-regression)", async () => {
+    const { tool } = makeTool({ heartbeatCadenceMs: 50 });
+    stubCatalogFetch("sdxl-pixel-art");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes("/v1/images/generations")) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      return (originalFetch as (u: unknown, i?: RequestInit) => Promise<Response>)(url, init);
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      const updates: string[] = [];
+      const res = await tool.execute("bg4", { prompt: "a dragon" }, undefined, (u) => {
+        const first = (u.content as Array<{ type: string; text?: string }>)[0];
+        updates.push(first && first.type === "text" ? (first.text ?? "") : "");
+      }, { modelRegistry: {} });
+      assert.match(res.content[0].text ?? "", /Image ready/);
+      assert.ok(updates.some((t) => /\d+s elapsed/.test(t)), "heartbeat expected for blocking render");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("image='last' fails naming the pending job id while a render is in flight (S9)", async () => {
+    const { tool, registry } = makeTool();
+    stubCatalogFetch("sdxl-pixel-art");
+    const pending = registry.create("sdxl-pixel-art", "512x512");
+    registry.start(pending.id);
+    await assert.rejects(
+      () => tool.execute("bg5", { prompt: "edit it", image: "last", background: true }, undefined, undefined, { modelRegistry: {} }),
+      (err: unknown) => {
+        assert.ok(err instanceof CommandError);
+        assert.match((err as Error).message, new RegExp(pending.id));
+        return true;
+      },
+    );
+  });
+});
+describe("detached render resilience (F1/F2)", () => {
+  function makeHardeningTool(overrides: Record<string, unknown> = {}) {
+    const store = new ImageSessionStore();
+    const registry = new ImageJobRegistry();
+    const sent: unknown[] = [];
+    const tool = buildGenerateImageTool({
+      getProviderId: () => "actsis-litellm",
+      authPath: "/nonexistent/auth.json",
+      store,
+      registry,
+      sendMessage: (message: unknown) => sent.push(message),
+      resolveStatusConfig: async () => ({ baseUrl: BASE_URL }),
+      getUsableApiKey: async () => "key-123",
+      ...overrides,
+    } as never) as never;
+    return { tool, store, registry, sent };
+  }
+
+  function stubHardeningFetch(delayMs: number): void {
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes("/v1/models")) {
+        return new Response(
+          JSON.stringify({ data: [{ id: "sdxl-pixel-art", mode: "image_generation" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof globalThis.fetch;
+  }
+
+  it("F1: a throwing delivery still releases the render slot", async () => {
+    const originalFetch = globalThis.fetch;
+    stubHardeningFetch(0);
+    try {
+      const { tool, registry } = makeHardeningTool({
+        sendMessage: () => {
+          throw new Error("This extension ctx is stale");
+        },
+      });
+      await (tool as { execute: (...args: unknown[]) => Promise<unknown> }).execute(
+        "f1",
+        { prompt: "a dragon", background: true },
+        undefined,
+        undefined,
+        { ui: { notify: () => {} }, modelRegistry: {} },
+      );
+      await new Promise((r) => setTimeout(r, 150));
+      assert.equal(registry.running().length, 0, "a failed delivery must not leak a slot");
+      assert.equal(registry.active().length, 0, "the cap must be fully released");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("F2: a throwing status setter does not crash the job timer", async () => {
+    const originalFetch = globalThis.fetch;
+    stubHardeningFetch(1300);
+    try {
+      const { tool, sent } = makeHardeningTool();
+      await (tool as { execute: (...args: unknown[]) => Promise<unknown> }).execute(
+        "f2",
+        { prompt: "a dragon", background: true },
+        undefined,
+        undefined,
+        {
+          ui: {
+            setStatus: () => {
+              throw new Error("This extension ctx is stale");
+            },
+            notify: () => {},
+          },
+          modelRegistry: {},
+        },
+      );
+      await new Promise((r) => setTimeout(r, 1800));
+      const delivered = sent.some((m) => {
+        const content = (m as { content?: Array<{ type?: string }> }).content;
+        return Array.isArray(content) && content.some((part) => part?.type === "image");
+      });
+      assert.ok(
+        delivered,
+        "the render must still be delivered (not downgraded to a failure) when the status setter throws",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

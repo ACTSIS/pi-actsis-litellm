@@ -30,6 +30,8 @@ import {
   parseImageArgs,
   saveImageB64,
 } from "./image.ts";
+import { runDetachedImageJob, type ImageSessionStore } from "./image-tool.ts";
+import { ImageJobRegistry } from "./image-jobs.ts";
 import { revokeToken, type CliAuthDiscovery } from "./client.ts";
 import { storedToDiscovery } from "./provider.ts";
 import {
@@ -66,6 +68,10 @@ export interface CommandDeps {
   }) => void;
   /** Override for the image fallback directory (tests). */
   imageSaveDir?: string;
+  /** Shared background-image job registry (T3/T5). */
+  imageJobRegistry?: ImageJobRegistry;
+  /** Shared session image store so /image --background updates "last" (T3/T4). */
+  imageStore?: ImageSessionStore;
 }
 
 export function defaultCommandDeps(): CommandDeps {
@@ -85,6 +91,7 @@ export function defaultCommandDeps(): CommandDeps {
       "actsis-litellm-prefs.json",
     ),
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    imageJobRegistry: new ImageJobRegistry(),
   };
 }
 
@@ -385,6 +392,44 @@ export function buildImageCommandHandler(deps: CommandDeps) {
         return;
       }
 
+      if (parsed.background) {
+        const registry = deps.imageJobRegistry;
+        if (!registry) {
+          notify(ctx, "Image job registry not configured.", "error");
+          return;
+        }
+        const job = registry.create(parsed.model, parsed.size);
+        notify(
+          ctx,
+          `Image render queued as ${job.id} (${parsed.model} ${parsed.size}). It will appear in the conversation when ready.`,
+          "info",
+        );
+        const fetcher = () =>
+          fetchImageGeneration(
+            cfg.baseUrl,
+            apiKey,
+            { prompt: parsed.prompt, model: parsed.model, size: parsed.size },
+            deps.requestTimeoutMs,
+            job.controller.signal,
+          );
+        runDetachedImageJob(
+          job,
+          {
+            sendMessage: (message) => deps.sendMessage?.(message),
+            notify: (message, level = "info") => notify(ctx, message, level),
+            setStatus: ctx.ui?.setStatus,
+            store: deps.imageStore,
+            imageSaveDir: deps.imageSaveDir,
+            registry,
+          },
+          parsed.prompt,
+          fetcher,
+        ).catch(() => {
+          // Delivery is handled inside the runner.
+        });
+        return;
+      }
+
       // Generation is synchronous (512² ≈ 14 s, 1024² ≈ 48 s); show progress
       // instead of silence.
       notify(
@@ -408,6 +453,7 @@ export function buildImageCommandHandler(deps: CommandDeps) {
       } catch {
         notify(ctx, "File copy failed; image is still rendered", "warning");
       }
+      deps.imageStore?.set({ data, mimeType: "image/png", filePath });
       const content: Array<TextContent | ImageContent> = [
         { type: "text", text: `/image "${parsed.prompt}" — ${result.model} ${result.size}` },
         imagePart,
@@ -431,6 +477,44 @@ export function buildImageCommandHandler(deps: CommandDeps) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `actsis-litellm:image failed: ${message}`, "error");
     }
+  };
+}
+
+export function buildCancelImageHandler(deps: CommandDeps) {
+  return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const target = args.trim();
+    const registry = deps.imageJobRegistry;
+    if (!registry) {
+      notify(ctx, "Image job registry not configured.", "error");
+      return;
+    }
+    if (!target || target === "all") {
+      if (target === "all") {
+        const ids = registry.cancelAll();
+        if (ids.length === 0) {
+          notify(ctx, "No image renders in flight.", "info");
+          return;
+        }
+        notify(
+          ctx,
+          `Aborted image renders: ${ids.join(", ")}. The render may keep running on the gateway GPU.`,
+          "info",
+        );
+        return;
+      }
+      notify(ctx, "Usage: /actsis-litellm:cancel-image \u003cid|all\u003e", "warning");
+      return;
+    }
+    const job = registry.cancel(target);
+    if (!job) {
+      notify(ctx, `No active image render with id "${target}".`, "warning");
+      return;
+    }
+    notify(
+      ctx,
+      `Aborted image render ${job.id} (${job.model} ${job.size}). The render may keep running on the gateway GPU.`,
+      "info",
+    );
   };
 }
 
