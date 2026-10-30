@@ -11,6 +11,8 @@ import {
   IMAGE_DEFAULT_MODEL,
 } from "../extensions/lib/image.ts";
 import { buildImageCommandHandler, type CommandDeps } from "../extensions/lib/commands.ts";
+import { ImageSessionStore } from "../extensions/lib/image-tool.ts";
+import { ImageJobRegistry } from "../extensions/lib/image-jobs.ts";
 import { AuthError, CommandError } from "../extensions/lib/errors.ts";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 
@@ -39,6 +41,14 @@ describe("parseImageArgs", () => {
     assert.equal(parsed.prompt, "a dragon");
     assert.equal(parsed.size, "512x512");
     assert.equal(parsed.model, IMAGE_DEFAULT_MODEL);
+    assert.equal(parsed.background, false);
+  });
+
+  it("accepts --background anywhere in the args", () => {
+    assert.equal(parseImageArgs("--background a dragon").background, true);
+    assert.equal(parseImageArgs("a dragon --background").background, true);
+    assert.equal(parseImageArgs("a dragon --size 1024 --background").size, "1024x1024");
+    assert.equal(parseImageArgs("a dragon --background --size 768").size, "768x768");
   });
 
   it("accepts --size 512|768|1024 anywhere in the args", () => {
@@ -204,6 +214,8 @@ describe("/image command", () => {
       authPath: path.join(os.tmpdir(), "img-cmd-auth.json"),
       prefsPath: path.join(os.tmpdir(), "img-cmd-prefs.json"),
       requestTimeoutMs: 30_000,
+      imageJobRegistry: new ImageJobRegistry(),
+      imageStore: new ImageSessionStore(),
       ...over,
     };
   }
@@ -259,5 +271,52 @@ describe("/image command", () => {
     const { ctx } = makeCtx({ apiKey: undefined });
     await buildImageCommandHandler(makeDeps())("a dragon", ctx);
     assert.equal(called, false);
+  });
+
+  it("--background queues a detached job and notifies its id (T3)", async () => {
+    const { ctx, notifications } = makeCtx({ apiKey: "sk-x" });
+    const deps = makeDeps();
+    globalThis.fetch = jsonFetch(200, { data: [{ b64_json: PNG_B64 }] });
+    const stubbedFetch = globalThis.fetch;
+    let resolveGeneration: (() => void) | undefined;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes("/v1/images/generations")) {
+        await new Promise<void>((resolve) => {
+          resolveGeneration = resolve;
+        });
+      }
+      return (stubbedFetch as (u: unknown, i?: RequestInit) => Promise<Response>)(url, init);
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      await buildImageCommandHandler(deps)("--background a dragon", ctx);
+      const info = notifications.find((n) => n.level === "info");
+      assert.ok(info);
+      assert.match(info.message, /queued/);
+      assert.match(info.message, /img-/);
+      const job = deps.imageJobRegistry!.list()[0];
+      assert.ok(job);
+      assert.equal(job.status, "running");
+      resolveGeneration!();
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(deps.imageStore?.get()?.data, PNG_B64);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("--background failure delivers a visible message (T4)", async () => {
+    globalThis.fetch = jsonFetch(500, { error: { message: "gpu busy" } });
+    const { ctx, notifications } = makeCtx({ apiKey: "sk-x" });
+    const sent: unknown[] = [];
+    const deps = makeDeps({
+      sendMessage: (message) => sent.push(message),
+    });
+    await buildImageCommandHandler(deps)("--background a dragon", ctx);
+    await new Promise((r) => setTimeout(r, 50));
+    const msg = sent.find((m) => (m as { customType?: string }).customType === "actsis-litellm:image");
+    assert.ok(msg);
+    assert.equal((msg as { display?: boolean }).display, true);
+    assert.match(((msg as { content?: Array<{ type: string; text?: string }> }).content?.[0] as { text?: string })?.text ?? "", /failed/);
+    assert.ok(notifications.some((n) => n.level === "error"));
   });
 });
