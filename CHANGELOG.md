@@ -1,102 +1,61 @@
 # Changelog
 
-## Sin publicar — 2026-10-30 — issue #61 (renders de imagen en background)
+## 0.6.4 — 2026-10-30 — Paired release with opencode-actsis-litellm
 
-- Añadido: **renders de imagen detachados** — `generate_image` acepta
-  `background: true` y `/actsis-litellm:image` acepta `--background`. La llamada
-  devuelve un id de job al instante y la imagen terminada llega después como
-  mensaje propio, sin bloquear el turno del chat ni gatillar un turno nuevo. El
-  camino bloqueante sigue siendo el default: cuando el modelo necesita el
-  resultado para decidir el siguiente paso, esperar es correcto.
-- Añadido: el store de sesión (`image="last"`) se actualiza recién cuando el
-  render termina; una edición que necesite `"last"` mientras hay un render en
-  vuelo falla nombrando el job pendiente.
-- Añadido: `/actsis-litellm:cancel-image <id|all>` y `AbortController` propio por
-  job (el signal del tool pertenece al turno y no sobrevive al retorno).
-- Añadido: estado en la línea de status mientras hay renders en vuelo
-  (`job: modelo tamaño (Ns)`), limpiado al terminar el último; tope de 2 renders
-  concurrentes porque el gateway renderiza en una sola GPU.
-- Añadido: `session_shutdown` aborta los jobs en vuelo de forma idempotente y
-  avisa que el render puede seguir corriendo en la GPU del gateway. Una falla se
-  reporta como mensaje visible en el transcript más notificación.
-- Endurecido (hallazgos F1/F2 de la verificación independiente): la entrega y el
-  estado en la UI son best-effort — un `ctx` obsoleto ya no puede filtrar un slot
-  del tope de concurrencia ni convertir un tick del timer en una excepción no
-  capturada.
-
-## Sin publicar — 2026-10-30 — issue #59 (arranque sin URL de gateway / Windows)
-
-- Corregido: la extensión ya no aborta el arranque con `Provider actsis-litellm:
-  "baseUrl" is required when defining custom models.` cuando hay catálogo de
-  modelos cacheado y no hay URL de gateway resoluble. El placeholder que habilita
-  `/login` registra `models: []` (S1) y el catálogo cacheado vuelve a publicarse
-  en cuanto hay URL.
-- Corregido: la ruta del config de usuario (`~/.pi/agent/actsis-litellm.json`) se
-  resuelve con `os.homedir()`, igual que `auth.json` y el cache de modelos, en vez
-  de `env.HOME`. En Windows/PowerShell `HOME` no existe y la búsqueda apuntaba a
-  `/.pi/agent/actsis-litellm.json` (S2). El orden de precedencia se mantiene:
-  `homeDir` inyectado > `HOME` > `os.homedir()`.
-
-## Sin publicar — 2026-10-29 — issues #47 (v2: agente con tool de imagen)
-
-- Añadido: **tool `actsis-litellm:generate_image`** (modelo-callable) para
-  pedir imágenes NATURALMENTE en el chat: el agente la llama con
-  `prompt`/`size`/`model`/`image`. La lista de modelos disponibles se
-  **descubre** del gateway (`/v1/models`, mode=image_generation) y la
-  description de la tool se refresca (throttle 5 min, re-registro en
-  `before_agent_start`) — nunca hardcodeada. Selección (S2): param explícito
-  > heurística (imagen de entrada → modelo de edición) > default sdxl.
-- Añadido: **edición por instrucción** desde el chat: el parámetro `image`
-  acepta `"last"` (última imagen generada en la sesión, store) o un path
-  (png/jpg/webp) → multipart `POST /v1/images/edits` (qwen-image-edit, 2511).
-- Añadido: timeouts adaptativos por modelo/tamaño (Qwen 512=300 s,
-  Qwen 1024=600 s, resto 180 s) + progreso vía onUpdate.
-- Añadido: render con el mismo mensaje custom de /image + store de sesión
-  para ediciones encadenadas.
-- Corregido: `fetchImageEdit` ahora envía el campo multipart `size=WIDTHxHEIGHT`
-  derivado del parámetro `size` de la tool (S1); antes la edición heredaba las
-  dimensiones de la imagen de referencia.
-- Corregido: el timeout de edición se presupuesta a partir del tamaño realmente
-  enviado y de la familia del modelo (S2): qwen 512 = 300 s, qwen 768/1024 =
-  1500 s, otras familias = 180 s.
-- Añadido: heartbeat de progreso mientras la petición de imagen está en vuelo
-  (S3), reportando segundos transcurridos vía `onUpdate` como máximo cada 30 s.
-- Corregido: un timeout client-side en edición ya no dice que el gateway no
-  respondió (S4); ahora informa que la petición fue abandonada tras agotar el
-  presupuesto y que el render puede seguir ejecutándose en el backend ocupando
-  la GPU.
-
-## Sin publicar — 2026-10-29 — issues #48 y #47
-
-- Añadido: **`/actsis-litellm:image`** — generación de pixel-art vía
-  `POST /v1/images/generations` (`sdxl-pixel-art`), con flag `--size 512|768|1024`,
-  timeout client-side de al menos 180 s, mensaje custom renderizado en el
-  transcript (imagen inline si el terminal soporta kitty/iterm2) y copia .png
-  persistida; usa la misma credencial que el chat.
-- Añadido: la caché del catálogo guarda **qué credencial/equipo** la generó
-  (auth kind + userId + teamId, campo aditivo del schema v2);
-  `/actsis-litellm:models` y `/actsis-litellm:status` lo muestran y sugieren
-  re-login cuando una sesión ligada a un equipo ve solo modelos `oc/*`
-  (causa raíz de #48: el catálogo hereda la lista del equipo elegido en el
-  consent del login).
-- Docs: README con la semántica de scope del catálogo y la sección de
-  generación de imágenes.
-
-## Sin publicar — 2026-10-22 — usage-subs: contrato v2 y tabla compacta
-
-- Añadido: **`/subs-usage` como ruta canónica** con fallback automático a
-  `/ollama-usage` en 404 — las versiones desplegadas en gateways viejos
-  siguen funcionando, y los gateways nuevos se llaman por su nombre canónico.
-- Añadido: `SubscriptionUsage` acepta `provider`/`account`/`status` del
-  contrato v2 (parseo tolerante); la columna `Sub` muestra `provider:account`
-  (`chatgpt:0`, `claude:0`) y queda verbatim en payloads legacy.
-- Cambiado: **tabla compacta** — se quitaron los contadores de requests y
-  tokens (la celda más ancha y de bajo valor junto al porcentaje), y el sufijo
-  de plan (`(plus)`, `(subscription)`). Ancho máximo medido contra el gateway
-  productivo: 94 columnas (antes ~130).
-- Cambiado: una ventana intacta sin reloj de reset muestra `full` en lugar de
-  `-` (Anthropic devuelve `five_hour.resets_at = null` con `isActive: false`
-  mientras la ventana de 5 h no se usa).
+- **Image generation: `/actsis-litellm:image` and the `generate_image` tool**
+  (issue #47, PRs #49 and #51) — pixel-art generation through the gateway's
+  `POST /v1/images/generations` (`sdxl-pixel-art`, `n=1`, png, `--size
+  512|768|1024`, client-side timeout floor of 180 s, persisted png plus a
+  rendered custom message that never triggers a model turn), and a
+  model-callable tool for natural chat requests: the image models are
+  DISCOVERED from `/v1/models` (`mode=image_generation`) for both the tool
+  description and the selection policy (explicit param > image input →
+  editing model > default), never hardcoded. Instruction-based editing goes
+  through multipart `POST /v1/images/edits` with `image: "last"` (session
+  store) or a png/jpg/webp path. Mirrored in opencode-actsis-litellm.
+- **Fixed: image edits are honest about what they send** (issue #46, PR #47) —
+  the edit request now carries the multipart `size` field, the timeout is
+  budgeted from the size actually sent and the model family (Qwen 512 = 300 s,
+  Qwen 768/1024 = 1500 s, other families = 180 s), progress reports elapsed
+  seconds at most every 30 s while the request is in flight, and a client-side
+  timeout says the request was abandoned instead of blaming the gateway.
+- **Fixed: tool name and description were provider-hostile** (issues #52/#54,
+  PRs #53/#55/#56) — the edits multipart uses the `image[]` field (LiteLLM's
+  passthrough drops `files`), the description states that every listed model
+  accepts both text-to-image and editing (and that 3D/realistic requests must
+  go to a prompt-driven model), and the tool is named
+  `actsis-litellm_generate_image` because Responses/Claude reject `:` in
+  `input[].name`.
+- **Catalog fetch scope** (issue #48, PR #49) — the model cache records which
+  credential fetched it (OAuth session with `userId`/`teamId`, or API key;
+  additive v2 field), `/actsis-litellm:models` and `/actsis-litellm:status`
+  surface it, and a team-bound session that only sees `oc/*` models gets a
+  re-login hint. Mirrored in opencode-actsis-litellm.
+- **`/subs-usage` contract v2 and compact table** (PRs #44/#45) — the collector
+  route is called by its canonical name with a 404 fallback to `/ollama-usage`,
+  `SubscriptionUsage` accepts the v2 `provider`/`account`/`status` fields and
+  the `Sub` column renders `provider:account` while legacy payloads stay
+  byte-identical; the table drops the low-value request/token counters and the
+  plan suffix (94 columns against the productive gateway, down from ~130), and
+  an untouched window without a reset clock renders `full` instead of `-`.
+  Mirrored in opencode-actsis-litellm.
+- **Fixed: the extension could not start without a gateway URL on Windows**
+  (issue #59, PR #60) — a cached catalog no longer aborts startup with
+  `"baseUrl" is required when defining custom models` (the login-enabling
+  placeholder registers an empty model list and the cache is republished as
+  soon as a URL exists), and the user config path resolves through
+  `os.homedir()` like `auth.json` and the model cache instead of `env.HOME`,
+  which does not exist in PowerShell.
+- **Detached image renders** (issue #61, PR #62) — `generate_image` accepts
+  `background: true` and `/actsis-litellm:image` accepts `--background`: the
+  call returns a job id immediately and the finished image arrives later as
+  its own message, without blocking the chat turn or triggering a new one
+  (the blocking path stays the default). `last` only advances when the render
+  finishes, `/actsis-litellm:cancel-image <id|all>` aborts one job or all of
+  them with a per-job `AbortController`, the status line shows in-flight
+  renders (max two, because the gateway renders on a single GPU), and
+  `session_shutdown` aborts them idempotently while noting the render may keep
+  running on the gateway GPU. Parity in opencode-actsis-litellm is pending.
 
 ## 0.6.3 — 2026-10-16 — Paired release with opencode-actsis-litellm
 
