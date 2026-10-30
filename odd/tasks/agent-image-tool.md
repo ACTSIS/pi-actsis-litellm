@@ -89,3 +89,12 @@ L6 (2026-10-29, fix T3 image-edit-resolution-cap S1-S4): La edición heredaba
    ocupando la GPU (S4). Evidencia: LiteLLM v1.106.2 reenvía `size` al
    upstream (upstream registró `generate_image 512x512` para una referencia
    1920x1329). PR pendiente de revisión.
+
+L7 (2026-10-30): Entregado — issue #57 (aprobada), PR #58, merge commit
+   569a54a a main (método merge commit, igual que PR #40-#49). CI del PR
+   verde (`test`), suite local en main 379/379 y `typecheck` limpio.
+   Issue #57 cerrada como COMPLETED. El guardarraíl complementario del
+   gateway (ACTSIS/llm-server#56) ya estaba cerrado.
+   Decisión del dueño: entregar SIN tocar versión — `package.json` sigue en
+   0.6.3 y la sección "Sin publicar" del CHANGELOG queda como está hasta
+   que se decida el release pareado con opencode-actsis-litellm.
