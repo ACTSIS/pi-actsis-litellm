@@ -19,6 +19,10 @@
 - Añadido: `session_shutdown` aborta los jobs en vuelo de forma idempotente y
   avisa que el render puede seguir corriendo en la GPU del gateway. Una falla se
   reporta como mensaje visible en el transcript más notificación.
+- Endurecido (hallazgos F1/F2 de la verificación independiente): la entrega y el
+  estado en la UI son best-effort — un `ctx` obsoleto ya no puede filtrar un slot
+  del tope de concurrencia ni convertir un tick del timer en una excepción no
+  capturada.
 
 ## Sin publicar — 2026-10-30 — issue #59 (arranque sin URL de gateway / Windows)
 

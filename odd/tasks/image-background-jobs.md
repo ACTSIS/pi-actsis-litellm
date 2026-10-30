@@ -103,3 +103,18 @@ L4 (2026-10-30, parent): T1-T6 implemented by a delegated writer (`gentle-ai-wor
    Known verification gap (declared, not covered): the `session_shutdown` handler
    itself has no automated test because it is registered inline in `index.ts`;
    the underlying `cancelAll()` idempotency is covered by `test/image-jobs.test.ts`.
+L5 (2026-10-30, parent): Independent verification (`gentle-ai-verify`) returned
+   "ready to merge", no blockers, with two follow-ups. Both fixed in this branch
+   with RED-first tests (`detached render resilience (F1/F2)`):
+   F1 — slot release moved into `finally` and made independent of delivery:
+   `sendMessage`/`notify` are now wrapped (`deliver`/`notifySafely`) because pi
+   throws synchronously when the extension ctx is stale, and a cancelled job is
+   dropped instead of being resurrected as done/failed.
+   F2 — `refreshStatus` body wrapped in try/catch: a stale `setStatus` can no
+   longer turn a 1s timer tick into an uncaughtException.
+   RED observed for both (slot leaked: `running().length === 1`; render
+   downgraded to a failure message), then GREEN: suite 405/405, typecheck clean.
+   Still open from the verification (informational, deliberately not changed):
+   success-settled jobs stay in the registry map (tiny, no cap impact); a cancel
+   landing during the post-fetch continuation still delivers the image; the
+   pending-`last` guard names only the first running job.

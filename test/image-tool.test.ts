@@ -649,3 +649,95 @@ describe("buildGenerateImageTool.execute background mode (T2/T4/T6)", () => {
     );
   });
 });
+describe("detached render resilience (F1/F2)", () => {
+  function makeHardeningTool(overrides: Record<string, unknown> = {}) {
+    const store = new ImageSessionStore();
+    const registry = new ImageJobRegistry();
+    const sent: unknown[] = [];
+    const tool = buildGenerateImageTool({
+      getProviderId: () => "actsis-litellm",
+      authPath: "/nonexistent/auth.json",
+      store,
+      registry,
+      sendMessage: (message: unknown) => sent.push(message),
+      resolveStatusConfig: async () => ({ baseUrl: BASE_URL }),
+      getUsableApiKey: async () => "key-123",
+      ...overrides,
+    } as never) as never;
+    return { tool, store, registry, sent };
+  }
+
+  function stubHardeningFetch(delayMs: number): void {
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes("/v1/models")) {
+        return new Response(
+          JSON.stringify({ data: [{ id: "sdxl-pixel-art", mode: "image_generation" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof globalThis.fetch;
+  }
+
+  it("F1: a throwing delivery still releases the render slot", async () => {
+    const originalFetch = globalThis.fetch;
+    stubHardeningFetch(0);
+    try {
+      const { tool, registry } = makeHardeningTool({
+        sendMessage: () => {
+          throw new Error("This extension ctx is stale");
+        },
+      });
+      await (tool as { execute: (...args: unknown[]) => Promise<unknown> }).execute(
+        "f1",
+        { prompt: "a dragon", background: true },
+        undefined,
+        undefined,
+        { ui: { notify: () => {} }, modelRegistry: {} },
+      );
+      await new Promise((r) => setTimeout(r, 150));
+      assert.equal(registry.running().length, 0, "a failed delivery must not leak a slot");
+      assert.equal(registry.active().length, 0, "the cap must be fully released");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("F2: a throwing status setter does not crash the job timer", async () => {
+    const originalFetch = globalThis.fetch;
+    stubHardeningFetch(1300);
+    try {
+      const { tool, sent } = makeHardeningTool();
+      await (tool as { execute: (...args: unknown[]) => Promise<unknown> }).execute(
+        "f2",
+        { prompt: "a dragon", background: true },
+        undefined,
+        undefined,
+        {
+          ui: {
+            setStatus: () => {
+              throw new Error("This extension ctx is stale");
+            },
+            notify: () => {},
+          },
+          modelRegistry: {},
+        },
+      );
+      await new Promise((r) => setTimeout(r, 1800));
+      const delivered = sent.some((m) => {
+        const content = (m as { content?: Array<{ type?: string }> }).content;
+        return Array.isArray(content) && content.some((part) => part?.type === "image");
+      });
+      assert.ok(
+        delivered,
+        "the render must still be delivered (not downgraded to a failure) when the status setter throws",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

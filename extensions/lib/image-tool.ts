@@ -394,19 +394,44 @@ export async function runDetachedImageJob(
   const { registry, sendMessage, notify, setStatus, store, imageSaveDir } = options;
 
   function refreshStatus(): void {
-    const running = registry.running();
-    if (running.length === 0) {
-      setStatus?.(IMAGE_JOB_STATUS_KEY, undefined);
-      return;
+    // Best-effort: a stale or torn-down UI must never turn a timer tick into an
+    // uncaughtException (review finding F2).
+    try {
+      const running = registry.running();
+      if (running.length === 0) {
+        setStatus?.(IMAGE_JOB_STATUS_KEY, undefined);
+        return;
+      }
+      const lines = running.map((j) => {
+        const elapsed = Math.floor((Date.now() - j.startedAt) / 1000);
+        return `${j.id}: ${j.model} ${j.size} (${elapsed}s)`;
+      });
+      setStatus?.(IMAGE_JOB_STATUS_KEY, lines.join(" · "));
+    } catch {
+      // Status is informative only; never let it break the render.
     }
-    const lines = running.map((j) => {
-      const elapsed = Math.floor((Date.now() - j.startedAt) / 1000);
-      return `${j.id}: ${j.model} ${j.size} (${elapsed}s)`;
-    });
-    setStatus?.(IMAGE_JOB_STATUS_KEY, lines.join(" · "));
   }
 
+  // Delivery is best-effort too: pi throws synchronously from sendMessage when
+  // the extension ctx is stale (assertActive). That throw must never skip the
+  // slot release below, or the concurrency cap leaks permanently (finding F1).
+  const deliver = (message: Parameters<typeof sendMessage>[0]): void => {
+    try {
+      sendMessage(message);
+    } catch {
+      // The transcript entry is lost; the slot release below still runs.
+    }
+  };
+  const notifySafely = (message: string, level: "error"): void => {
+    try {
+      notify?.(message, level);
+    } catch {
+      // Notification is informative only.
+    }
+  };
+
   const statusInterval = setInterval(refreshStatus, 1_000);
+  let outcome: "done" | "failed" = "failed";
 
   try {
     registry.start(job.id);
@@ -420,7 +445,8 @@ export async function runDetachedImageJob(
       // best-effort copy (R4-001); the image still renders
     }
     store?.set({ data, mimeType: "image/png", filePath });
-    sendMessage({
+    outcome = "done";
+    deliver({
       customType: IMAGE_CUSTOM_TYPE,
       content: [
         { type: "text", text: `${job.id}: generate_image "${prompt}" — ${result.model} ${result.size}` },
@@ -429,26 +455,31 @@ export async function runDetachedImageJob(
       display: true,
       details: { filePath },
     });
-    registry.settle(job.id, "done");
   } catch (err) {
     const current = registry.get(job.id);
     if (current?.status === "cancelled") {
       // Cancellation was already reported by /cancel-image; just release the slot.
-      registry.remove(job.id);
-      refreshStatus();
-      return;
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      deliver({
+        customType: IMAGE_CUSTOM_TYPE,
+        content: [{ type: "text", text: `${job.id} failed: ${message}` }],
+        display: true,
+      });
+      notifySafely(`${job.id} failed: ${message}`, "error");
     }
-    const message = err instanceof Error ? err.message : String(err);
-    sendMessage({
-      customType: IMAGE_CUSTOM_TYPE,
-      content: [{ type: "text", text: `${job.id} failed: ${message}` }],
-      display: true,
-    });
-    notify?.(`${job.id} failed: ${message}`, "error");
-    registry.settle(job.id, "failed");
-    registry.remove(job.id);
   } finally {
     clearInterval(statusInterval);
+    // Release the slot unconditionally (finding F1): the cap must never depend on
+    // a delivery succeeding. A job cancelled meanwhile keeps its own status and
+    // is dropped instead of being resurrected as done/failed.
+    const current = registry.get(job.id);
+    if (current?.status === "cancelled") {
+      registry.remove(job.id);
+    } else if (current && (current.status === "queued" || current.status === "running")) {
+      registry.settle(job.id, outcome);
+      if (outcome === "failed") registry.remove(job.id);
+    }
     refreshStatus();
   }
 }
