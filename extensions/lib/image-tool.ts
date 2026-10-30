@@ -32,11 +32,36 @@ export const EDIT_MODEL_HINT = "edit";
 // for COMMANDS which models never see)
 export const IMAGE_TOOL_NAME = "actsis-litellm_generate_image";
 
-/** Adaptive timeout by model family and size (S4): generation is synchronous. */
+/** Adaptive timeout by model family and actual edit size (S2): generation is synchronous. */
 export function imageToolTimeoutMs(model: string, size: string): number {
-  const w = parseInt(size.split("x")[0] ?? "512", 10) || 512;
-  if (model.toLowerCase().includes("qwen")) return w >= 1024 ? 600_000 : 300_000;
-  return Math.max(180_000, w >= 1024 ? 180_000 : 120_000);
+  const [w = 512, h = 512] = size.split("x").map((s) => parseInt(s, 10));
+  const longest = Math.max(Number.isFinite(w) ? w : 512, Number.isFinite(h) ? h : 512);
+  if (model.toLowerCase().includes("qwen")) return longest >= 768 ? 1_500_000 : 300_000;
+  return 180_000;
+}
+
+/** Maximum seconds between in-flight progress updates for slow image renders (S3). */
+export const IMAGE_HEARTBEAT_CADENCE_MS = 30_000;
+
+/** Reports elapsed seconds via onUpdate while a promise is in flight (S3). */
+export function withHeartbeat<T>(
+  promise: Promise<T>,
+  onUpdate: AgentToolUpdateCallback | undefined,
+  cadenceMs = IMAGE_HEARTBEAT_CADENCE_MS,
+  startedAt = Date.now(),
+): Promise<T> {
+  if (!onUpdate || cadenceMs <= 0) return promise;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  timer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    onUpdate({
+      content: [{ type: "text", text: `Still waiting... ${elapsed}s elapsed` }],
+      details: {},
+    });
+  }, cadenceMs);
+  return promise.finally(() => {
+    if (timer) clearInterval(timer);
+  });
 }
 
 /** Map the gateway's /v1/models to the available image model ids. */
@@ -166,18 +191,34 @@ export async function resolveImageInput(
   return { data, mimeType, filePath: input };
 }
 
+function isClientTimeoutError(err: unknown): boolean {
+  let current: unknown = err;
+  const seen = new Set<unknown>();
+  for (let i = 0; i < 5 && current instanceof Error; i++) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    const name = current.name;
+    const code = (current as { code?: unknown }).code;
+    if (name === "TimeoutError" || code === 23 || code === "23") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /** Multipart edit request (S3) — mirrors fetchImageGeneration's error shapes. */
 export async function fetchImageEdit(
   baseUrl: string,
   apiKey: string,
-  options: { model: string; prompt: string; image: SessionImage },
+  options: { model: string; prompt: string; image: SessionImage; size?: string },
   timeoutMs?: number,
 ): Promise<ImageGenerationResultShape> {
   const normalized = baseUrl.replace(/\/+$/, "");
+  const size = options.size ?? "512x512";
   const form = new FormData();
   form.append("model", options.model);
   form.append("prompt", options.prompt);
   form.append("n", "1");
+  form.append("size", size);
   // Field name matters all the way through LiteLLM's images/edits passthrough:
   // "files" is unknown there and the request reaches the upstream without the
   // multipart body (400 "Content-Type must be multipart/form-data"). The
@@ -187,17 +228,31 @@ export async function fetchImageEdit(
     new Blob([Buffer.from(options.image.data, "base64")], { type: options.image.mimeType }),
     "input.png",
   );
-  const response = await fetchOrThrow(
-    `${normalized}/v1/images/edits`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
-      signal: AbortSignal.timeout(timeoutMs ?? 180_000),
-    },
-    (message, cause) => new ImageError(message, { cause }),
-    "Failed to reach gateway images edits endpoint",
-  );
+  const budgetMs = timeoutMs ?? 180_000;
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetchOrThrow(
+      `${normalized}/v1/images/edits`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: AbortSignal.timeout(budgetMs),
+      },
+      (message, cause) => new ImageError(message, { cause }),
+      "Failed to reach gateway images edits endpoint",
+    );
+  } catch (err) {
+    if (isClientTimeoutError(err)) {
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      const budgetSeconds = Math.round(budgetMs / 1000);
+      throw new ImageError(
+        `Image edit abandoned by the client after ${elapsedSeconds}s of a ${budgetSeconds}s budget: the render may still be running in the backend and keeps the GPU busy.`,
+      );
+    }
+    throw err;
+  }
   if (response.status === 401 || response.status === 403) {
     throw new AuthError("Credential rejected by gateway. Run /login again.");
   }
@@ -350,9 +405,15 @@ export function buildGenerateImageTool(deps: GenerateImageToolDeps) {
       });
 
       const timeout = imageToolTimeoutMs(model, size);
-      const result = imageInput
-        ? await fetchImageEdit(cfg.baseUrl, apiKey, { model, prompt: params.prompt, image: imageInput }, timeout)
-        : await fetchImageGeneration(cfg.baseUrl, apiKey, { prompt: params.prompt, model, size }, timeout);
+      const startedAt = Date.now();
+      const result = await withHeartbeat(
+        imageInput
+          ? fetchImageEdit(cfg.baseUrl, apiKey, { model, prompt: params.prompt, image: imageInput, size }, timeout)
+          : fetchImageGeneration(cfg.baseUrl, apiKey, { prompt: params.prompt, model, size }, timeout),
+        onUpdate,
+        IMAGE_HEARTBEAT_CADENCE_MS,
+        startedAt,
+      );
 
       const data = result.images[0];
       let filePath: string | undefined;

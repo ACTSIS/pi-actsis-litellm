@@ -16,6 +16,18 @@
   Qwen 1024=600 s, resto 180 s) + progreso vía onUpdate.
 - Añadido: render con el mismo mensaje custom de /image + store de sesión
   para ediciones encadenadas.
+- Corregido: `fetchImageEdit` ahora envía el campo multipart `size=WIDTHxHEIGHT`
+  derivado del parámetro `size` de la tool (S1); antes la edición heredaba las
+  dimensiones de la imagen de referencia.
+- Corregido: el timeout de edición se presupuesta a partir del tamaño realmente
+  enviado y de la familia del modelo (S2): qwen 512 = 300 s, qwen 768/1024 =
+  1500 s, otras familias = 180 s.
+- Añadido: heartbeat de progreso mientras la petición de imagen está en vuelo
+  (S3), reportando segundos transcurridos vía `onUpdate` como máximo cada 30 s.
+- Corregido: un timeout client-side en edición ya no dice que el gateway no
+  respondió (S4); ahora informa que la petición fue abandonada tras agotar el
+  presupuesto y que el render puede seguir ejecutándose en el backend ocupando
+  la GPU.
 
 ## Sin publicar — 2026-10-29 — issues #48 y #47
 
