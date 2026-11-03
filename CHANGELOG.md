@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.5 — 2026-11-03 — Paired release with opencode-actsis-litellm
+
+- **No functional changes on the pi side.** This release exists to keep the
+  shared paired version number: `opencode-actsis-litellm` 0.6.5 ports issue #61
+  (detached image renders in background, delivered by this package in 0.6.4) to
+  OpenCode, so both packages ship under the same number and the pair stays
+  aligned.
+- Documentation: the issue and PR references in the 0.6.4 section were corrected
+  on `main` after that release (commit `3bc286a`).
+
 ## 0.6.4 — 2026-10-30 — Paired release with opencode-actsis-litellm
 
 - **Image generation: `/actsis-litellm:image` and the `generate_image` tool**
