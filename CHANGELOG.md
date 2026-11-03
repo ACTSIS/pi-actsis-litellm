@@ -3,7 +3,7 @@
 ## 0.6.4 — 2026-10-30 — Paired release with opencode-actsis-litellm
 
 - **Image generation: `/actsis-litellm:image` and the `generate_image` tool**
-  (issue #47, PRs #49 and #51) — pixel-art generation through the gateway's
+  (issues #47/#50, PRs #49/#51) — pixel-art generation through the gateway's
   `POST /v1/images/generations` (`sdxl-pixel-art`, `n=1`, png, `--size
   512|768|1024`, client-side timeout floor of 180 s, persisted png plus a
   rendered custom message that never triggers a model turn), and a
@@ -13,7 +13,7 @@
   editing model > default), never hardcoded. Instruction-based editing goes
   through multipart `POST /v1/images/edits` with `image: "last"` (session
   store) or a png/jpg/webp path. Mirrored in opencode-actsis-litellm.
-- **Fixed: image edits are honest about what they send** (issue #46, PR #47) —
+- **Fixed: image edits are honest about what they send** (issue #57, PR #58) —
   the edit request now carries the multipart `size` field, the timeout is
   budgeted from the size actually sent and the model family (Qwen 512 = 300 s,
   Qwen 768/1024 = 1500 s, other families = 180 s), progress reports elapsed
