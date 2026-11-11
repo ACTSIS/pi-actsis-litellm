@@ -49,11 +49,11 @@ publicada (`@opencode/plugin *`, `@opencode/util *`).
 
 | ID | Spec | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S1, S3 — Pi: overrides de undici/brace-expansion + lock regenerado | inline | `chore(deps): override vulnerable undici and brace-expansion` |
+| T1 | S1, S3 — Pi: subir la devDependency `pi-coding-agent` (el pin exacto de `undici` impedía todo override) + lock regenerado | inline | `chore(deps): bump pi-coding-agent to 1.5.2 to drop vulnerable transitives` |
 | T2 | S4 — Pi: suite + typecheck + re-audit | inline | (evidencia en T1) |
 | T3 | S1, S3 — OpenCode: overrides undici/vite/seroval/glob + lock | inline | `chore(deps): override vulnerable transitive dependencies` |
 | T4 | S4, S5 — OpenCode: suite + typecheck + bundle + `npm ci` limpio | inline | `chore(deps): make npm ci work without peer flags` |
-| T5 | S2 — registrar lo no mitigable y actualizar CHANGELOG en ambos | inline | `docs: record dependency vulnerability decisions` |
+| T5 | S2 — registrar lo no mitigable y actualizar CHANGELOG en ambos | inline | `docs: record the dependency vulnerability fix and its evidence` |
 | T6 | S1, S4 — Pi: adaptar el código a `@earendil-works/pi-coding-agent@1.5.2` (unión discriminada `ProviderModelConfig`) sin cambio de comportamiento | writer | `refactor(catalog): follow the pi-coding-agent 1.5 model config union` |
 | T7 | S1, S4 — Pi: verificación final (audit en cero, typecheck, suite) y CHANGELOG | inline | (evidencia en T6) |
 
@@ -82,3 +82,13 @@ publicada (`@opencode/plugin *`, `@opencode/util *`).
   miembro de chat, sin añadir ningún campo en runtime: el payload del cache
   de catálogo queda byte-idéntico. El discriminante real en los tipos
   instalados es `"image"`, no `"image_generation"` (corrección al briefing).
+- L6 (verificador independiente, 2026-11-11): confirmó el resultado (audit 0/0
+  sin copias vulnerables escondidas, `npm ci` real desde cero en `/tmp`,
+  `dist/` reconstruido byte-idéntico, y que en `main` el `npm ci` fallaba con
+  ERESOLVE — la deuda de peers era real). Defectos que corrigió este cierre:
+  D1 (pin exacto de `solid-js` → árbol inválido, resuelto con `^1.9.12`),
+  D3/D4/D6 (docs inexactos, corregidos). Quedan como seguimiento: D2
+  (`@opentui/core` declara `engines.node >=26.4.0`, preexistente, rompe
+  `npm ci --engine-strict` en Node 22) y D5 (los overrides de major de
+  `glob`/`minimatch` dentro de internos de npm no están cubiertos por ningún
+  test: este repo **no tiene CI**).
