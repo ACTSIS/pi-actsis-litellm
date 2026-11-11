@@ -30,6 +30,8 @@ import {
   parseImageArgs,
   saveImageB64,
 } from "./image.ts";
+import { runDetachedImageJob, type ImageSessionStore } from "./image-tool.ts";
+import { ImageJobRegistry } from "./image-jobs.ts";
 import { revokeToken, type CliAuthDiscovery } from "./client.ts";
 import { storedToDiscovery } from "./provider.ts";
 import {
@@ -47,6 +49,13 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { LiteLLMExtensionState } from "../index.ts";
 
 import { readStoredCredentialGatewayUrl, readStoredCredentialUserId } from "./gateway-url.ts";
+import {
+  fetchGatewayIdentity,
+  fetchTeamAlias,
+  formatTeamLine,
+  formatUserLine,
+  type IdentityState,
+} from "./identity.ts";
 
 const DEFAULT_PROVIDER_ID = "actsis-litellm";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -66,6 +75,10 @@ export interface CommandDeps {
   }) => void;
   /** Override for the image fallback directory (tests). */
   imageSaveDir?: string;
+  /** Shared background-image job registry (T3/T5). */
+  imageJobRegistry?: ImageJobRegistry;
+  /** Shared session image store so /image --background updates "last" (T3/T4). */
+  imageStore?: ImageSessionStore;
 }
 
 export function defaultCommandDeps(): CommandDeps {
@@ -85,6 +98,7 @@ export function defaultCommandDeps(): CommandDeps {
       "actsis-litellm-prefs.json",
     ),
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    imageJobRegistry: new ImageJobRegistry(),
   };
 }
 
@@ -201,6 +215,18 @@ export function extractUsableApiKey(authResult: unknown): string | null {
   return null;
 }
 
+/**
+ * Team of the connection (S2): the teamId fixed by the login consent, stored
+ * on the OAuth credential (`credential.teamId`). Absent for API-key
+ * credentials and sessions without a team; always read defensively because
+ * the pi-ai credential shape does not declare the extension extras.
+ */
+function credentialTeamId(credential: OAuthCredential | undefined): string | null {
+  if (!credential) return null;
+  const teamId = (credential as { teamId?: unknown }).teamId;
+  return typeof teamId === "string" && teamId ? teamId : null;
+}
+
 function notify(
   ctx: ExtensionCommandContext,
   message: string,
@@ -282,10 +308,63 @@ export function buildStatusHandler(deps: CommandDeps) {
         }
       }
 
+      // Identity lines (S1/S2): both requests are best-effort. A failure
+      // degrades only these two lines (S6) — it never throws and never
+      // persists the raw /user/info payload (S5). No usable credential means
+      // no network at all.
+      const usableApiKey = extractUsableApiKey(authResult);
+      const teamId = credentialTeamId(oauthCredential);
+
+      let identityState: IdentityState;
+      let teamLine: string;
+      if (!usableApiKey) {
+        identityState = { kind: "no-credential" };
+        teamLine = formatTeamLine({
+          hasCredential: false,
+          teamId: null,
+          teamAlias: null,
+        });
+      } else {
+        try {
+          identityState = {
+            kind: "ok",
+            identity: await fetchGatewayIdentity(
+              cfg.baseUrl,
+              usableApiKey,
+              deps.requestTimeoutMs,
+            ),
+          };
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          identityState = { kind: "unavailable", reason };
+        }
+
+        let teamAlias: string | null = null;
+        if (teamId) {
+          try {
+            teamAlias = await fetchTeamAlias(
+              cfg.baseUrl,
+              usableApiKey,
+              deps.requestTimeoutMs,
+              teamId,
+            );
+          } catch {
+            // Alias resolution is best-effort (S4): failing shows id-only (S2).
+          }
+        }
+        teamLine = formatTeamLine({
+          hasCredential: true,
+          teamId,
+          teamAlias,
+        });
+      }
+
       const textLines = [
         `Provider: ${providerId} — ${registered ? "registered" : "not registered"}`,
         authLine,
         sourceLine,
+        formatUserLine(identityState),
+        teamLine,
         `Catalog: ${count} models for provider, cache age: ${formatCacheAge(age)}`,
         catalogScopeLine(scope),
         `Gateway: ${cfg.baseUrl}`,
@@ -385,6 +464,44 @@ export function buildImageCommandHandler(deps: CommandDeps) {
         return;
       }
 
+      if (parsed.background) {
+        const registry = deps.imageJobRegistry;
+        if (!registry) {
+          notify(ctx, "Image job registry not configured.", "error");
+          return;
+        }
+        const job = registry.create(parsed.model, parsed.size);
+        notify(
+          ctx,
+          `Image render queued as ${job.id} (${parsed.model} ${parsed.size}). It will appear in the conversation when ready.`,
+          "info",
+        );
+        const fetcher = () =>
+          fetchImageGeneration(
+            cfg.baseUrl,
+            apiKey,
+            { prompt: parsed.prompt, model: parsed.model, size: parsed.size },
+            deps.requestTimeoutMs,
+            job.controller.signal,
+          );
+        runDetachedImageJob(
+          job,
+          {
+            sendMessage: (message) => deps.sendMessage?.(message),
+            notify: (message, level = "info") => notify(ctx, message, level),
+            setStatus: ctx.ui?.setStatus,
+            store: deps.imageStore,
+            imageSaveDir: deps.imageSaveDir,
+            registry,
+          },
+          parsed.prompt,
+          fetcher,
+        ).catch(() => {
+          // Delivery is handled inside the runner.
+        });
+        return;
+      }
+
       // Generation is synchronous (512² ≈ 14 s, 1024² ≈ 48 s); show progress
       // instead of silence.
       notify(
@@ -408,6 +525,7 @@ export function buildImageCommandHandler(deps: CommandDeps) {
       } catch {
         notify(ctx, "File copy failed; image is still rendered", "warning");
       }
+      deps.imageStore?.set({ data, mimeType: "image/png", filePath });
       const content: Array<TextContent | ImageContent> = [
         { type: "text", text: `/image "${parsed.prompt}" — ${result.model} ${result.size}` },
         imagePart,
@@ -431,6 +549,44 @@ export function buildImageCommandHandler(deps: CommandDeps) {
       const message = err instanceof Error ? err.message : String(err);
       notify(ctx, `actsis-litellm:image failed: ${message}`, "error");
     }
+  };
+}
+
+export function buildCancelImageHandler(deps: CommandDeps) {
+  return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const target = args.trim();
+    const registry = deps.imageJobRegistry;
+    if (!registry) {
+      notify(ctx, "Image job registry not configured.", "error");
+      return;
+    }
+    if (!target || target === "all") {
+      if (target === "all") {
+        const ids = registry.cancelAll();
+        if (ids.length === 0) {
+          notify(ctx, "No image renders in flight.", "info");
+          return;
+        }
+        notify(
+          ctx,
+          `Aborted image renders: ${ids.join(", ")}. The render may keep running on the gateway GPU.`,
+          "info",
+        );
+        return;
+      }
+      notify(ctx, "Usage: /actsis-litellm:cancel-image \u003cid|all\u003e", "warning");
+      return;
+    }
+    const job = registry.cancel(target);
+    if (!job) {
+      notify(ctx, `No active image render with id "${target}".`, "warning");
+      return;
+    }
+    notify(
+      ctx,
+      `Aborted image render ${job.id} (${job.model} ${job.size}). The render may keep running on the gateway GPU.`,
+      "info",
+    );
   };
 }
 

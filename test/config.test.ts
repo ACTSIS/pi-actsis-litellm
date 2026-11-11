@@ -156,6 +156,43 @@ describe("resolveConfig", async () => {
     assert.equal(config.baseUrl, "https://file.example.com");
   });
 
+  it("S2: resolves the user config from the real home when HOME is unset", async () => {
+    const probed: string[] = [];
+    const deps = {
+      // PowerShell on Windows: process.env.HOME is undefined.
+      env: {} as Record<string, string | undefined>,
+      fileLoader: async (path: string) => {
+        probed.push(path);
+        return path === "/home/winuser/.pi/agent/actsis-litellm.json"
+          ? { baseUrl: "https://file.example.com" }
+          : null;
+      },
+      prompt: async () => undefined,
+      storedUrl: null,
+      homeDir: "/home/winuser",
+    };
+    const config = await resolveConfig(deps);
+    assert.equal(config.baseUrl, "https://file.example.com");
+    // First file wins, so discovery stops there: the home path must be the real
+    // one, not the "/.pi/..." that an unset HOME produced.
+    assert.deepEqual(probed, ["/home/winuser/.pi/agent/actsis-litellm.json"]);
+  });
+
+  it("S2 regression: HOME still wins when it is set", async () => {
+    const probed: string[] = [];
+    const deps = {
+      env: { HOME: "/home/bashuser" } as Record<string, string | undefined>,
+      fileLoader: async (path: string) => {
+        probed.push(path);
+        return null;
+      },
+      prompt: async () => undefined,
+      storedUrl: null,
+    };
+    await resolveConfig(deps).catch(() => undefined);
+    assert.equal(probed[0], "/home/bashuser/.pi/agent/actsis-litellm.json");
+  });
+
   it("falls back to stored credential URL before prompting", async () => {
     const deps = makeDeps({
       env: {},

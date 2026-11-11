@@ -63,3 +63,38 @@ L3 (2026-10-29): Delivered — issue #50, PR #51, squash merge 61ed4aa to
    follow-up edit referencing the image, confirming the S1 flow.
    Note: unrelated pre-existing warning in the extension loader about
    gentle-engram's peerDependencies (typebox) — out of scope here.
+L4 (2026-10-29): Fix delivery — owner's cross-PC report: SDXL T2I ok,
+   edits with qwen-image-edit always 400. Root cause: tool multipart field
+   'files' unrecognized by LiteLLM's /v1/images/edits passthrough (request
+   forwarded without the multipart body). Fixed to 'image[]' + regression
+   test on the real FormData; verified end-to-end vs production (EDIT 200
+   in 144 s). Issue #52, PR #53, merge 15ef11a to main.
+L5 (2026-10-29): Description fix — owner's local session: asked for a 3D
+   render, the agent inferred "qwen-image-edit = edit-only" from the name +
+   description wording and re-styled a pixel-art image instead. Reworked
+   description (both use cases per model; sdxl style baked in; 3D/realistic
+   routing guidance) + regression test. Issue #54, PR #55, merge ba66e11.
+
+L6 (2026-10-29, fix T3 image-edit-resolution-cap S1-S4): La edición heredaba
+   las dimensiones de la imagen de referencia (1920x1329 → render 1920x1336,
+   timeout client-side 23 y GPU ocupada 10 min después del abort). Se añadió a
+   `fetchImageEdit` el campo multipart `size=WIDTHxHEIGHT` derivado del
+   parámetro `size` de la tool (S1); el timeout se presupuesta ahora desde
+   el tamaño realmente enviado: qwen 512 = 300 s, qwen 768/1024 = 1500 s,
+   otras familias = 180 s (S2). Mientras la petición está en vuelo se reporta
+   un heartbeat de segundos transcurridos vía `onUpdate` cada 30 s como máximo
+   (S3). Un timeout client-side en edición ya no acusa al gateway de no
+   responder; el mensaje indica que la petición fue abandonada tras agotar el
+   presupuesto y advierte que el render puede seguir corriendo en el backend
+   ocupando la GPU (S4). Evidencia: LiteLLM v1.106.2 reenvía `size` al
+   upstream (upstream registró `generate_image 512x512` para una referencia
+   1920x1329). PR pendiente de revisión.
+
+L7 (2026-10-30): Entregado — issue #57 (aprobada), PR #58, merge commit
+   569a54a a main (método merge commit, igual que PR #40-#49). CI del PR
+   verde (`test`), suite local en main 379/379 y `typecheck` limpio.
+   Issue #57 cerrada como COMPLETED. El guardarraíl complementario del
+   gateway (ACTSIS/llm-server#56) ya estaba cerrado.
+   Decisión del dueño: entregar SIN tocar versión — `package.json` sigue en
+   0.6.3 y la sección "Sin publicar" del CHANGELOG queda como está hasta
+   que se decida el release pareado con opencode-actsis-litellm.
