@@ -10,6 +10,13 @@ import { CatalogError } from "./errors.ts";
 import type { ActsisEnabledConfig } from "./config.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
+/**
+ * Chat member of the pi 1.5 ProviderModelConfig union (discriminated by the
+ * optional `type` field; image/classifier set it to "image"/"classifier").
+ * The package root does not re-export the member types, so derive it here.
+ */
+type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
+
 const CHAT_MODES = new Set(["chat", "completion"]);
 const NON_CHAT_MODES = new Set([
   "embedding",
@@ -74,7 +81,7 @@ export interface CachedCatalogScope {
  */
 type LiteLLMInfoEntry = Record<string, unknown>;
 
-type ThinkingLevelMap = NonNullable<ProviderModelConfig["thinkingLevelMap"]>;
+type ThinkingLevelMap = NonNullable<ChatModelConfig["thinkingLevelMap"]>;
 type CostTiers = NonNullable<NonNullable<ProviderModelConfig["cost"]>["tiers"]>;
 
 const PI_THINKING_LEVELS = [
@@ -205,7 +212,7 @@ function buildThinkingLevelMap(levels: unknown): ThinkingLevelMap | undefined {
 function infoToConfig(
   id: string,
   entry: Record<string, unknown> | undefined,
-): ProviderModelConfig {
+): ChatModelConfig {
   const info = resolveModelInfo(entry);
   const contextWindow = positiveInt(info.max_input_tokens) ?? 128_000;
   const maxTokens =
@@ -215,7 +222,7 @@ function infoToConfig(
   if (info.supports_vision === true) input.push("image");
 
   const tiers = buildCostTiers(info);
-  const config: ProviderModelConfig = {
+  const config: ChatModelConfig = {
     id,
     name: id,
     reasoning: true,
@@ -242,7 +249,7 @@ export async function fetchCatalogModels(
   config: ActsisEnabledConfig,
   apiKey: string,
   signal?: AbortSignal,
-): Promise<ProviderModelConfig[]> {
+): Promise<ChatModelConfig[]> {
   const modelsResult: ModelsResponse = await fetchModels(
     config.baseUrl,
     apiKey,
@@ -312,7 +319,7 @@ export async function fetchCatalogModels(
   }
 
   const seen = new Set<string>();
-  const models: ProviderModelConfig[] = [];
+  const models: ChatModelConfig[] = [];
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
     if (seen.has(id)) continue;
