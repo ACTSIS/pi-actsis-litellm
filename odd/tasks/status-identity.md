@@ -118,6 +118,20 @@ CHANGELOG.
   `User: ricardo.pinto@actsis.com (RPINTO, proxy_admin)` y
   `Team: Acceso-Completo (ad59169e-f0c9-45a3-aa73-eec187533bdf)`. `npm test`
   400/400 y `npm run typecheck` en 0.
+- L7 (revisión nativa, 2026-11-11): linaje `review-7d62184fa76233a6`
+  (tier medio, 1137 líneas, lentes risk/resilience/readability/reliability).
+  Los cuatro lentes y el refutador encontraron dos hallazgos **CRITICAL** de
+  causa propia con la misma raíz — `R1-001` y `R3-001`: el catch del parseo
+  JSON de `gatewayJson` interpolaba el mensaje del parser en el motivo
+  visible; V8 cita un fragmento del cuerpo y el cuerpo de `/user/info`
+  lleva `keys[].token` en claro. Corregido en `67e0c92`: motivo fijo y sin
+  `cause`. Tests nuevos en ambos repos (Pi 401/401, OpenCode 515/515).
+- L8 (bloqueo, 2026-11-11): el plan de corrección no se pudo entregar — el
+  controlador rechazó su ranura como obsoleta tres veces seguidas
+  (`capture-binding-rejected`, sin mutación) con el binding exacto que ofrece
+  `review.status`. El linaje queda en `correction_required`: **no aprobado**.
+  La entrega queda a política ordinaria del repositorio, a decisión del
+  usuario.
 - L6 (frontera de slice, 2026-11-11): 1124 líneas autoradas en
   `feat/status-identity` — 667 de tests, 299 de código de producción, 160 de
   docs — por encima de la guía de ~400 por PR. Estrategia de entrega (Git):
