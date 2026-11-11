@@ -246,3 +246,51 @@ describe("buildProviderConfig oauth.login", () => {
     assert.deepEqual(successUrls, ["https://gateway.example.com"]);
   });
 });
+
+describe("buildProviderConfig placeholder registration (issue #59 S1)", () => {
+  const cachedModels = [
+    {
+      id: "claude-sonnet-4",
+      name: "Claude Sonnet 4",
+      api: "openai-completions" as const,
+      reasoning: true,
+      input: ["text"] as ("text" | "image")[],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200_000,
+      maxTokens: 8192,
+    },
+  ];
+
+  const cacheDeps = {
+    loadCachedModels: async () => cachedModels,
+    saveCachedModels: async () => {},
+    computeCacheAge: async () => null,
+  };
+
+  it("S1: withholds cached models when the gateway URL is unknown", async () => {
+    const provider = await buildProviderConfig(null, cacheDeps);
+    assert.equal(provider.baseUrl, "");
+    assert.deepEqual(
+      provider.models,
+      [],
+      "pi rejects registerProvider when models are non-empty and baseUrl is empty",
+    );
+  });
+
+  it("S1 regression: still publishes cached models when the gateway URL is known", async () => {
+    const provider = await buildProviderConfig(
+      {
+        baseUrl: "https://gateway.example.com",
+        providerId: "actsis-litellm",
+        catalogTtlMs: 15 * 60 * 1000,
+        requestTimeoutMs: 30_000,
+      },
+      cacheDeps,
+    );
+    assert.equal(provider.baseUrl, "https://gateway.example.com/v1");
+    assert.deepEqual(
+      provider.models.map((model) => model.id),
+      ["claude-sonnet-4"],
+    );
+  });
+});
