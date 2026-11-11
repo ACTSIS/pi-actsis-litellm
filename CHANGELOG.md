@@ -1,6 +1,8 @@
 # Changelog
 
-## Sin publicar — 2026-11-11 — usuario y team conectados en /status
+## 0.6.6 — 2026-11-11 — Paired release with opencode-actsis-litellm
+
+### Usuario y team conectados en /status
 
 - Añadido: **`/actsis-litellm:status` ahora muestra el usuario conectado al
   gateway y el team de la conexión** (`User:` y `Team:`, entre `Credential
@@ -21,7 +23,7 @@
   claro) se reduce en memoria a la allowlist mostrada; nunca se imprime ni se
   persiste en disco.
 
-## Sin publicar — 2026-11-11 — dependencias: audit en cero
+### Dependencias: audit en cero
 
 - Corregido: **`npm audit` sin vulnerabilidades**. `@earendil-works/pi-coding-agent`
   sube de `0.87.1` a `1.5.2` (la misma versión del runtime real) porque la
