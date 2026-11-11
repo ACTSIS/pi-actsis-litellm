@@ -58,7 +58,7 @@ The provider shows up in pi as **Actsis LiteLLM**, and its sign-in method as **A
 | Command | Description |
 |---------|-------------|
 | `/login` | pi's native login flow. Once this provider is registered, select `actsis-litellm` to authenticate. |
-| `/actsis-litellm:status` | Show provider registration, credential state and source, catalog count, cache age, fetch scope, gateway URL, and a budget summary (stored credentials). |
+| `/actsis-litellm:status` | Show provider registration, credential state and source, the connected gateway user and team, catalog count, cache age, fetch scope, gateway URL, and a budget summary (stored credentials). |
 | `/actsis-litellm:models` | Force a fresh model catalog sync and show added/removed models, plus the credential/scope the catalog was fetched with (issue: team-bound sessions may list only `oc/*` models). |
 | `/actsis-litellm:usage` | Show per-model usage (spend, tokens, requests). Args: nothing (last 30 days), a day count like `14`, or a range like `2025-03-01 .. 2025-03-31`. |
 | `/actsis-litellm:usage-subs` | Show Ollama Cloud per-subscription window usage (dashboard-style remaining % of the 5-hour and weekly windows, reset countdowns, credits), in the /usage table style with threshold-colored bars correlated to the elapsed window (pace escalation + projection when consumption runs ahead). Args: none. |
@@ -142,6 +142,28 @@ per session and never blocks startup if TLS handling fails.
   reports the exact fix: Windows → `setx NODE_USE_SYSTEM_CA 1` (Node ≥ 22.19.0)
   or export the CA to PEM (`certutil -encode ca.cer ca.pem`) and set
   `NODE_EXTRA_CA_CERTS`; Linux → `--use-openssl-ca` / `SSL_CERT_FILE`.
+
+## Connected user and team (/actsis-litellm:status)
+
+The status output shows who is connected to the gateway and which LiteLLM team
+the connection was enabled with:
+
+- **`User:`** resolved from `GET /user/info` with the same credential used for
+  chat: `User: ricardo.pinto@actsis.com (RPINTO, proxy_admin)` (email, alias
+  and role; parts are omitted when the gateway does not report them, and the
+  raw `user_id` is shown when nothing else is available). `User: no
+  credential` when there is nothing stored; `User: unavailable (<reason>)`
+  when the identity request fails.
+- **`Team:`** the team fixed at the login consent screen (`credential.teamId`),
+  with the alias resolved best-effort from the gateway's `/team/list` (fallback
+  `/team/info`): `Team: Acceso-Completo (ad59169e-...)`. Without a bound team
+  (or with an API key) it shows `Team: none (no team bound)`; if the alias
+  cannot be resolved, the id alone is shown.
+
+The identity payload is reduced in memory to the fields shown above — the
+gateway's `/user/info` response includes `keys[].token` in clear text, and that
+payload is never printed, logged, or persisted. Identity failures never break
+the status: the remaining lines stay exactly as before.
 
 ## Budget & rate-limit status
 
