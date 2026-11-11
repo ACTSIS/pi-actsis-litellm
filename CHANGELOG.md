@@ -20,6 +20,23 @@
 - Seguridad: el payload crudo de `/user/info` (incluye `keys[].token` en
   claro) se reduce en memoria a la allowlist mostrada; nunca se imprime ni se
   persiste en disco.
+
+## Sin publicar — 2026-11-11 — dependencias: audit en cero
+
+- Corregido: **`npm audit` sin vulnerabilidades**. `@earendil-works/pi-coding-agent`
+  sube de `0.87.1` a `1.5.2` (la misma versión del runtime real) porque la
+  `0.87.1` pinea `undici` a `8.10.2` exacto y npm 9.2.0 no aplica `overrides`
+  sobre pins exactos, ni planos, ni anidados por padre, ni con árbol y lock
+  limpios ni con `--prefer-online`. Con `1.5.2` desaparecen las 5 alertas de
+  `undici` 8.x y las de `minimatch` / `brace-expansion` (antes: 4
+  vulnerabilidades, 2 high).
+- Cambiado: `ProviderModelConfig` es ahora una unión discriminada por `type`;
+  el catálogo deriva el miembro de chat con `Extract` en lugar de anotar la
+  unión entera. Solo anotaciones de tipo: no se emite ningún campo nuevo en
+  runtime, así que el payload del cache de catálogo queda byte-idéntico.
+- Añadido: `overrides` de `brace-expansion` (`5.0.13`) y `undici` (`8.12.4`)
+  como defensa en profundidad si algún día desaparece el pin.
+
 ## 0.6.5 — 2026-11-03 — Paired release with opencode-actsis-litellm
 
 - **No functional changes on the pi side.** This release exists to keep the

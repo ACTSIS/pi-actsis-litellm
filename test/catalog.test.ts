@@ -14,6 +14,13 @@ import { buildProviderConfig } from "../extensions/lib/provider.ts";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { RefreshModelsContext } from "@earendil-works/pi-ai";
 
+/**
+ * Chat member of the pi 1.5 ProviderModelConfig union (discriminated by the
+ * optional `type` field). Deriving it here keeps the fixture typed without a
+ * cast, since the package root does not re-export the member types.
+ */
+type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
+
 const BASE_URL = "https://gateway.example.com";
 
 let originalFetch: typeof globalThis.fetch;
@@ -670,7 +677,7 @@ describe("buildProviderConfig", () => {
     requestTimeoutMs: 30_000,
   };
 
-  function makeStored(id: string): ProviderModelConfig {
+  function makeStored(id: string): ChatModelConfig {
     return {
       id,
       name: id,
