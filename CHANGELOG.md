@@ -1,5 +1,25 @@
 # Changelog
 
+## Sin publicar — 2026-11-11 — usuario y team conectados en /status
+
+- Añadido: **`/actsis-litellm:status` ahora muestra el usuario conectado al
+  gateway y el team de la conexión** (`User:` y `Team:`, entre `Credential
+  source:` y `Catalog:`). La identidad se consulta con `GET /user/info` y la
+  misma credencial usada para el chat: `User:
+  ricardo.pinto@actsis.com (RPINTO, proxy_admin)` (email, alias y rol; se
+  omite lo que el gateway no reporte, con caída al `user_id`). El `Team:` es
+  el equipo fijado en el consent del login (`credential.teamId`), con el alias
+  resuelto best-effort del gateway (`/team/list`, con fallback `/team/info`):
+  `Team: Acceso-Completo (ad59169e-...)`. Sin team ligado (o con API key):
+  `Team: none (no team bound)`; alias no resoluble: solo el id.
+- Añadido: degradación no fatal — cualquier fallo de identidad o de alias solo
+  degrada esas dos líneas (`User: unavailable (<motivo>)`, equipo sin alias),
+  el resto del status queda byte-idéntico y un 401/403 se refleja como motivo,
+  no como excepción. Sin credencial no hay red: `User: no credential` /
+  `Team: no credential`.
+- Seguridad: el payload crudo de `/user/info` (incluye `keys[].token` en
+  claro) se reduce en memoria a la allowlist mostrada; nunca se imprime ni se
+  persiste en disco.
 ## 0.6.5 — 2026-11-03 — Paired release with opencode-actsis-litellm
 
 - **No functional changes on the pi side.** This release exists to keep the

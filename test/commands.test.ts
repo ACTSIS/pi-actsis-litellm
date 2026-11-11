@@ -146,7 +146,11 @@ describe("commands", () => {
         const notifications = (ctx as unknown as { notifications: Array<{ message: string; level?: string }> }).notifications;
         assert.equal(notifications.length, 1);
         assert.equal(notifications[0].level, "info");
-        assert.equal(notifications[0].message.split("\n")[1], `Auth: oauth credential stored (expires ${expected})`);
+        const lines = notifications[0].message.split("\n");
+        assert.equal(
+          lines.find((l) => l.startsWith("Auth:")),
+          `Auth: oauth credential stored (expires ${expected})`,
+        );
       }
     });
 
@@ -222,6 +226,315 @@ describe("commands", () => {
       assert.ok(text.includes("Provider: actsis-litellm -- registered"));
       assert.ok(text.includes("Auth: no credential"));
       assert.ok(text.includes("Gateway: https://gateway.example.com"));
+    });
+
+    // --- Identity and team lines (feature: status-identity, S1/S2/S5/S6/S7) ---
+
+    const TEAM_ID = "ad59169e-f0c9-45a3-aa73-eec187533bdf";
+    const USER_ID = "2ed0da75-556d-4c8f-99da-727d7e085fd4";
+    const SECRET_TOKEN = "sk-SECRET-KEY-TOKEN";
+    const GATEWAY = "https://gateway.example.com";
+
+    function mockStatusFetch(
+      impl: (url: string) => Promise<Response>,
+    ): { calls: string[]; restore: () => void } {
+      const originalFetch = globalThis.fetch;
+      const calls: string[] = [];
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        calls.push(url.replace(GATEWAY, ""));
+        return impl(url);
+      }) as typeof fetch;
+      return {
+        calls,
+        restore: () => {
+          globalThis.fetch = originalFetch;
+        },
+      };
+    }
+
+    function mockRestore(t: { after: (fn: () => void) => void }, mock: { restore: () => void }): void {
+      t.after(() => mock.restore());
+    }
+
+    async function writeDeterministicCache(): Promise<void> {
+      await mkdir(path.dirname(deps.cachePath), { recursive: true });
+      await writeFile(
+        deps.cachePath,
+        JSON.stringify({
+          version: 2,
+          fetchedAt: Date.now() - 5 * 60_000,
+          models: [],
+          credential: { kind: "oauth", userId: USER_ID, teamId: TEAM_ID },
+        }),
+        "utf8",
+      );
+    }
+
+    function oauthAuthResult(): AuthResult {
+      return {
+        source: "stored",
+        credential: {
+          type: "oauth",
+          access: "tok",
+          teamId: TEAM_ID,
+        },
+      } as unknown as AuthResult;
+    }
+
+    function apiKeyAuthResult(): AuthResult {
+      return {
+        source: "stored",
+        auth: { apiKey: "sk-test" },
+      } as unknown as AuthResult;
+    }
+
+    function registryWithAuth(authResult: AuthResult): ModelRegistry {
+      return makeMockRegistry({
+        getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+        getProviderAuth: async () => authResult,
+        getRegisteredProviderIds: () => ["actsis-litellm"],
+        getAll: () => [],
+      });
+    }
+
+    function notificationsOf(ctx: ExtensionCommandContext): Array<{ message: string; level?: string }> {
+      return (ctx as unknown as {
+        notifications: Array<{ message: string; level?: string }>;
+      }).notifications;
+    }
+
+    function requireEnvGateway(t: { after: (fn: () => void) => void }): void {
+      process.env.ACTSIS_LITELLM_URL = GATEWAY;
+      t.after(() => {
+        delete process.env.ACTSIS_LITELLM_URL;
+      });
+    }
+
+    it("shows the connected user and the connection team after the credential source and before the catalog (S1/S2/S7)", async (t) => {
+      requireEnvGateway(t);
+      await writeDeterministicCache();
+      const mock = mockStatusFetch(async (url) => {
+        if (url.endsWith("/key/info")) {
+          return new Response(JSON.stringify({}), { status: 200 });
+        }
+        if (url.endsWith("/user/info")) {
+          return new Response(
+            JSON.stringify({
+              user_id: USER_ID,
+              user_info: {
+                user_email: "ricardo.pinto@actsis.com",
+                user_alias: "RPINTO",
+                user_role: "proxy_admin",
+                teams: [TEAM_ID],
+              },
+              keys: [{ token: SECRET_TOKEN }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith("/team/list")) {
+          return new Response(
+            JSON.stringify([{ team_id: TEAM_ID, team_alias: "Acceso-Completo" }]),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      });
+      mockRestore(t, mock);
+
+      const ctx = makeMockCtx({ modelRegistry: registryWithAuth(oauthAuthResult()) });
+      await buildStatusHandler(deps)("", ctx);
+
+      const lines = notificationsOf(ctx)[0].message.split("\n");
+      const userIndex = lines.findIndex((l) => l.startsWith("User:"));
+      const teamIndex = lines.findIndex((l) => l.startsWith("Team:"));
+      assert.ok(userIndex > lines.findIndex((l) => l.startsWith("Credential source:")));
+      assert.ok(teamIndex > userIndex);
+      assert.ok(teamIndex < lines.findIndex((l) => l.startsWith("Catalog:")));
+      assert.equal(lines[userIndex], "User: ricardo.pinto@actsis.com (RPINTO, proxy_admin)");
+      assert.equal(lines[teamIndex], `Team: Acceso-Completo (${TEAM_ID})`);
+    });
+
+    it("never leaks the raw /user/info token payload into the status and writes no identity file (S5)", async (t) => {
+      requireEnvGateway(t);
+      await writeDeterministicCache();
+      const { readdir } = await import("node:fs/promises");
+      const filesBefore = (await readdir(tmpDir)).sort();
+      const mock = mockStatusFetch(async (url) => {
+        if (url.endsWith("/key/info")) {
+          return new Response(JSON.stringify({}), { status: 200 });
+        }
+        if (url.endsWith("/user/info")) {
+          return new Response(
+            JSON.stringify({
+              user_info: { user_alias: "RPINTO" },
+              keys: [{ token: SECRET_TOKEN }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith("/team/list")) {
+          return new Response(
+            JSON.stringify([{ team_id: TEAM_ID, team_alias: "Acceso-Completo" }]),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      });
+      mockRestore(t, mock);
+
+      const ctx = makeMockCtx({ modelRegistry: registryWithAuth(oauthAuthResult()) });
+      await buildStatusHandler(deps)("", ctx);
+
+      const text = notificationsOf(ctx)[0].message;
+      assert.ok(!text.includes(SECRET_TOKEN));
+      assert.ok(text.includes("User: RPINTO"));
+      assert.deepEqual((await readdir(tmpDir)).sort(), filesBefore);
+    });
+
+    it("resolves the team alias via /team/list with /team/info fallback and degrades to id-only (S4)", async (t) => {
+      requireEnvGateway(t);
+      await writeDeterministicCache();
+      const mock = mockStatusFetch(async (url) => {
+        if (url.endsWith("/key/info")) {
+          return new Response(JSON.stringify({}), { status: 200 });
+        }
+        if (url.endsWith("/user/info")) {
+          return new Response(
+            JSON.stringify({ user_info: { user_alias: "RPINTO" } }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith("/team/list")) {
+          return new Response("Forbidden", { status: 403 });
+        }
+        if (url.endsWith("/team/info?team_id=ad59169e-f0c9-45a3-aa73-eec187533bdf")) {
+          return new Response(
+            JSON.stringify({ team_id: TEAM_ID, team_alias: "Acceso-Completo" }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      });
+      mockRestore(t, mock);
+
+      const ctx = makeMockCtx({ modelRegistry: registryWithAuth(oauthAuthResult()) });
+      await buildStatusHandler(deps)("", ctx);
+
+      const lines = notificationsOf(ctx)[0].message.split("\n");
+      assert.equal(lines.find((l) => l.startsWith("Team:")), `Team: Acceso-Completo (${TEAM_ID})`);
+      assert.ok(mock.calls.includes("/team/list"));
+      assert.ok(
+        mock.calls.includes(`/team/info?team_id=${TEAM_ID}`),
+        `expected /team/info fallback, got ${JSON.stringify(mock.calls)}`,
+      );
+    });
+
+    it("keeps every pre-existing status line byte-identical when identity fetch fails with a network error (S6)", async (t) => {
+      requireEnvGateway(t);
+      await writeDeterministicCache();
+      const mock = mockStatusFetch(async (url) => {
+        if (url.endsWith("/key/info")) {
+          return new Response(JSON.stringify({}), { status: 200 });
+        }
+        throw new Error("boom network");
+      });
+      mockRestore(t, mock);
+
+      const ctx = makeMockCtx({ modelRegistry: registryWithAuth(oauthAuthResult()) });
+      await buildStatusHandler(deps)("", ctx);
+
+      assert.equal(notificationsOf(ctx).length, 1);
+      assert.equal(notificationsOf(ctx)[0].level, "info");
+      assert.equal(
+        notificationsOf(ctx)[0].message,
+        [
+          "Provider: actsis-litellm — registered",
+          "Auth: oauth credential stored (expires never)",
+          "Credential source: stored",
+          "User: unavailable (Failed to fetch user info: boom network)",
+          `Team: ${TEAM_ID} (alias unavailable)`,
+          "Catalog: 0 models for provider, cache age: 5m ago",
+          `Catalog scope: OAuth session (team ${TEAM_ID})`,
+          "Gateway: https://gateway.example.com",
+        ].join("\n"),
+      );
+    });
+
+    it("reflects a 401 as the degraded reason instead of an exception (S6)", async (t) => {
+      requireEnvGateway(t);
+      await writeDeterministicCache();
+      const mock = mockStatusFetch(async (url) => {
+        if (url.endsWith("/key/info")) {
+          return new Response(JSON.stringify({}), { status: 200 });
+        }
+        return new Response("Unauthorized", { status: 401 });
+      });
+      mockRestore(t, mock);
+
+      const ctx = makeMockCtx({ modelRegistry: registryWithAuth(oauthAuthResult()) });
+      await buildStatusHandler(deps)("", ctx);
+
+      const lines = notificationsOf(ctx)[0].message.split("\n");
+      assert.equal(
+        lines.find((l) => l.startsWith("User:")),
+        "User: unavailable (Credential rejected by gateway. Run /login again.)",
+      );
+      assert.equal(lines.find((l) => l.startsWith("Team:")), `Team: ${TEAM_ID} (alias unavailable)`);
+      // Pre-existing lines stay byte-identical.
+      assert.equal(lines[0], "Provider: actsis-litellm — registered");
+      assert.equal(lines[1], "Auth: oauth credential stored (expires never)");
+      assert.equal(lines.find((l) => l.startsWith("Gateway:")), "Gateway: https://gateway.example.com");
+    });
+
+    it("reports User/Team no credential and performs no network call without a usable credential (S1/S2)", async (t) => {
+      requireEnvGateway(t);
+      const mock = mockStatusFetch(async () => {
+        throw new Error("must not be called");
+      });
+      mockRestore(t, mock);
+
+      const ctx = makeMockCtx({
+        modelRegistry: makeMockRegistry({
+          getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+          getProviderAuth: async () => undefined,
+          getRegisteredProviderIds: () => ["actsis-litellm"],
+          getAll: () => [],
+        }),
+      });
+      await buildStatusHandler(deps)("", ctx);
+
+      const lines = notificationsOf(ctx)[0].message.split("\n");
+      assert.equal(lines.find((l) => l.startsWith("User:")), "User: no credential");
+      assert.equal(lines.find((l) => l.startsWith("Team:")), "Team: no credential");
+      assert.deepEqual(mock.calls, []);
+    });
+
+    it("reports User: no credential with no usable token, and Team: none (no team bound) for an API-key credential (S1/S2)", async (t) => {
+      requireEnvGateway(t);
+      const mock = mockStatusFetch(async (url) => {
+        if (url.endsWith("/key/info")) {
+          return new Response(JSON.stringify({}), { status: 200 });
+        }
+        if (url.endsWith("/user/info")) {
+          return new Response(
+            JSON.stringify({ user_info: { user_alias: "RPINTO" } }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      });
+      mockRestore(t, mock);
+
+      const ctx = makeMockCtx({ modelRegistry: registryWithAuth(apiKeyAuthResult()) });
+      await buildStatusHandler(deps)("", ctx);
+
+      const lines = notificationsOf(ctx)[0].message.split("\n");
+      assert.equal(lines.find((l) => l.startsWith("Auth:")), "Auth: credential stored");
+      assert.equal(lines.find((l) => l.startsWith("User:")), "User: RPINTO");
+      assert.equal(lines.find((l) => l.startsWith("Team:")), "Team: none (no team bound)");
+      assert.ok(!lines.some((l) => l.startsWith("Budget:")));
     });
   });
 
