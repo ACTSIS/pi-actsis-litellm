@@ -156,11 +156,11 @@ async function gatewayJson(
 
   try {
     return await response.json();
-  } catch (err) {
-    throw new CatalogError(
-      `${routeLabel} response is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err },
-    );
+  } catch {
+    // S5: a JSON parser message can quote the offending body (V8 includes a
+    // snippet), and that body carries `keys[].token` in clear text. Never
+    // surface the parser text, and never attach it as a cause.
+    throw new CatalogError(`${routeLabel} response is not valid JSON`);
   }
 }
 

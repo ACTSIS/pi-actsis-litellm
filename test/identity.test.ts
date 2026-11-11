@@ -248,6 +248,22 @@ describe("identity", () => {
       );
     });
 
+    it("never surfaces the response body when the payload is not valid JSON (S5)", async () => {
+      const secret = "sk-SECRET-MALFORMED";
+      mockFetch(async () => new Response(`{"keys":[{"token":"${secret}"`, { status: 200 }));
+
+      await assert.rejects(
+        fetchGatewayIdentity("https://gateway.example.com", "key", 30_000),
+        (err) => {
+          assert.ok(err instanceof CatalogError);
+          assert.equal((err as CatalogError).message, "user info response is not valid JSON");
+          assert.ok(!(err as CatalogError).message.includes(secret));
+          assert.equal((err as { cause?: unknown }).cause, undefined);
+          return true;
+        },
+      );
+    });
+
     it("wraps network failures into a CatalogError with the failure message", async () => {
       mockFetch(async () => {
         throw new Error("boom network");
